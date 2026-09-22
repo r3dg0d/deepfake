@@ -10,6 +10,7 @@ def create_swapper(
     *,
     device: str = "cpu",
     allow_passthrough: bool = False,
+    precision: str = "fp32",
 ) -> Swapper:
     name = backend or active_backend()
     if name is None:
@@ -23,7 +24,7 @@ def create_swapper(
             return MissingModelSwapper("AlphaFace not installed. deepfake models install alphaface --yes")
         from .alphaface import AlphaFaceSwapper
 
-        return AlphaFaceSwapper(device=device)
+        return AlphaFaceSwapper(device=device, precision=precision)
     if name in ("inswapper", "insightface"):
         if not is_model_ready("inswapper"):
             return MissingModelSwapper(

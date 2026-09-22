@@ -30,23 +30,38 @@ class FaceDetector:
 
 
 class OpenCVHaarDetector(FaceDetector):
-    def __init__(self) -> None:
+    # Haar cost grows with pixel count; faces in webcam framing stay far above
+    # the minimum size after downscaling, so detect at <= this width and map
+    # boxes back (measured 33 ms → a few ms per call at 1280x720).
+    DETECT_WIDTH = 480
+
+    def __init__(self, detect_width: int | None = None) -> None:
         import cv2
 
         path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
         self._cascade = cv2.CascadeClassifier(path)
         if self._cascade.empty():
             raise RuntimeError(f"failed to load Haar cascade at {path}")
+        self.detect_width = detect_width or self.DETECT_WIDTH
 
     def detect(self, frame_bgr: np.ndarray) -> list[FaceBox]:
         import cv2
 
-        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        rects = self._cascade.detectMultiScale(
-            gray, scaleFactor=1.08, minNeighbors=4, minSize=(64, 64),
-            flags=getattr(__import__("cv2"), "CASCADE_SCALE_IMAGE", 0),
+        h, w = frame_bgr.shape[:2]
+        scale = min(1.0, self.detect_width / float(w))
+        small = frame_bgr if scale >= 1.0 else cv2.resize(
+            frame_bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA
         )
-        boxes = [FaceBox(int(x), int(y), int(w), int(h)) for (x, y, w, h) in rects]
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        min_side = max(24, int(64 * scale))
+        rects = self._cascade.detectMultiScale(
+            gray, scaleFactor=1.08, minNeighbors=4, minSize=(min_side, min_side),
+            flags=getattr(cv2, "CASCADE_SCALE_IMAGE", 0),
+        )
+        inv = 1.0 / scale
+        boxes = [
+            FaceBox(int(x * inv), int(y * inv), int(bw * inv), int(bh * inv)) for (x, y, bw, bh) in rects
+        ]
         boxes.sort(key=lambda b: b.w * b.h, reverse=True)
         return boxes
 
@@ -144,3 +159,47 @@ def align_crop(
         return np.zeros((size, size, 3), dtype=np.uint8), paste
     resized = cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR)
     return resized, paste
+
+
+class AsyncDetector:
+    """Runs a detector on its own thread against the newest submitted frame.
+
+    Live mode uses this so detection never sits on the swap's critical path;
+    the swap uses the most recent boxes (typically from the previous frame).
+    """
+
+    def __init__(self, detector: FaceDetector) -> None:
+        import threading
+
+        self._det = detector
+        self._cv = threading.Condition()
+        self._pending: np.ndarray | None = None
+        self._boxes: list[FaceBox] | None = None
+        self._closed = False
+        self._thread = threading.Thread(target=self._run, name="deepfake-detect", daemon=True)
+        self._thread.start()
+
+    def submit(self, frame_bgr: np.ndarray) -> None:
+        with self._cv:
+            self._pending = frame_bgr
+            self._cv.notify()
+
+    def latest(self) -> list[FaceBox] | None:
+        with self._cv:
+            return self._boxes
+
+    def _run(self) -> None:
+        while True:
+            with self._cv:
+                self._cv.wait_for(lambda: self._pending is not None or self._closed)
+                if self._closed:
+                    return
+                frame, self._pending = self._pending, None
+            boxes = self._det.detect(frame)
+            with self._cv:
+                self._boxes = boxes
+
+    def close(self) -> None:
+        with self._cv:
+            self._closed = True
+            self._cv.notify()

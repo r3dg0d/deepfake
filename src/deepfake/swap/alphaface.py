@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import time
@@ -25,9 +26,15 @@ class AlphaFaceSwapper:
 
     name = "alphaface"
 
-    def __init__(self, device: str = "cuda") -> None:
+    def __init__(self, device: str = "cuda", precision: str = "fp32") -> None:
         self.device = device if device != "auto" else ("cuda" if self._cuda_ok() else "cpu")
+        if precision not in ("fp32", "bf16"):
+            # fp16 is rejected on purpose: measured mean abs error 0.11-0.13 vs fp32
+            # on this model (AdaIN statistics overflow), bf16 stays at ~0.016.
+            raise ValueError("AlphaFace precision must be fp32 or bf16")
+        self.precision = precision
         self._source_tensor = None
+        self._id_code = None
         self._model = None
         self._vendor = vendor_dir()
         self._weights = models_dir() / "alphaface"
@@ -100,8 +107,10 @@ class AlphaFaceSwapper:
             cfg.id_network_path = ""
             cfg.id_network = "vit_b"
 
-            # Skip discriminator/VGG (training-only) for inference.
-            model = build_AlphaFace(config=cfg, fine_tune=False, adv_train=False, new_id_model=False)
+            # Skip discriminator/VGG (training-only) for inference. Upstream print()s
+            # progress; keep stdout clean for --json consumers.
+            with contextlib.redirect_stdout(sys.stderr):
+                model = build_AlphaFace(config=cfg, fine_tune=False, adv_train=False, new_id_model=False)
             ckpt = torch.load(cfg.model_path, map_location="cpu")
             if isinstance(ckpt, dict) and "swapper" in ckpt:
                 model.Swapper.load_state_dict(ckpt["swapper"])
@@ -133,7 +142,7 @@ class AlphaFaceSwapper:
         # Prefer a face crop of the identity image so ArcFace gets face, not background.
         face = source_bgr
         try:
-            from ..detect import create_detector, align_crop
+            from ..detect import align_crop, create_detector
 
             boxes = create_detector("auto").detect(source_bgr)
             if boxes:
@@ -147,6 +156,10 @@ class AlphaFaceSwapper:
         ten = torch.from_numpy(rgb).float().permute(2, 0, 1) / 255.0
         ten = _normalize_by_127_5(ten).unsqueeze(0).to(self._device)
         self._source_tensor = ten
+        # The ResNet-50 identity encoder only depends on the source face, so
+        # run it once here instead of on every frame (upstream forward() does).
+        with torch.inference_mode():
+            self._id_code = self._model.get_id_code(ten)
 
     def swap(self, target_face_bgr: np.ndarray) -> SwapResult:
         if self._source_tensor is None:
@@ -158,15 +171,17 @@ class AlphaFaceSwapper:
         target = torch.from_numpy(rgb).float().permute(2, 0, 1) / 255.0
         target = target.unsqueeze(0).to(self._device)
 
-        with torch.inference_mode():
-            out = self._model(target, self._source_tensor)
+        with torch.inference_mode(), torch.autocast(
+            "cuda", dtype=torch.bfloat16, enabled=self.precision == "bf16"
+        ):
+            out = self._model.Swapper(target, self._id_code)
             if out.dim() == 4:
                 out = out[0]
             if out.shape[0] in {1, 3, 4}:
                 out = out.permute(1, 2, 0)
             if float(out.max()) <= 1.5:
                 out = out * 255.0
-            out = out.clamp(0, 255).byte().detach().cpu().numpy()
+            out = out.float().clamp(0, 255).byte().detach().cpu().numpy()
 
         if out.ndim == 2:
             face = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
