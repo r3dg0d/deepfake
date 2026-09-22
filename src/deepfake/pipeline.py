@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -16,6 +16,9 @@ from .presets import Preset, get_preset
 from .swap.base import Swapper
 from .swap.factory import create_swapper
 from .watermark import apply_watermark
+
+if TYPE_CHECKING:
+    from .framegen.settings import FrameGenSettings
 
 
 @dataclass
@@ -32,6 +35,9 @@ class PipelineConfig:
     show_metrics: bool = True
     max_frames: int | None = None
     allow_passthrough: bool = False
+    swap_precision: str = "fp32"
+    async_detect: bool = False  # live mode: detection on its own thread
+    frame_gen: FrameGenSettings | None = None
 
 
 class FaceSwapPipeline:
@@ -39,16 +45,39 @@ class FaceSwapPipeline:
         self.cfg = cfg
         self.detector: FaceDetector = create_detector("auto")
         self.swapper: Swapper = create_swapper(
-            cfg.backend, device=cfg.device, allow_passthrough=cfg.allow_passthrough
+            cfg.backend,
+            device=cfg.device,
+            allow_passthrough=cfg.allow_passthrough,
+            precision=cfg.swap_precision,
         )
         self.metrics = MetricsTracker()
+        self._async = None
+        if cfg.async_detect:
+            from .detect import AsyncDetector
+
+            self._async = AsyncDetector(self.detector)
         self._prev_faces: dict[int, np.ndarray] = {}
+        self._prev_boxes: dict[int, FaceBox] = {}
+        self._alpha: dict[int, float] = {}
         self._frame_i = 0
 
     def set_source(self, source_bgr: np.ndarray) -> None:
         self.swapper.set_source(source_bgr)
 
+    def close(self) -> None:
+        if self._async is not None:
+            self._async.close()
+
     def process_frame(self, frame_bgr: np.ndarray) -> tuple[np.ndarray, Any]:
+        out, m = self.swap_frame(frame_bgr)
+        return apply_watermark(out, enabled=self.cfg.watermark), m
+
+    def swap_frame(self, frame_bgr: np.ndarray) -> tuple[np.ndarray, Any]:
+        """Detect → swap → composite, *without* the disclosure watermark.
+
+        Frame generation interpolates these clean frames; the watermark is
+        stamped on every presented frame afterwards so it stays crisp.
+        """
         t0 = time.perf_counter()
         preset = self.cfg.preset
         multi = self.cfg.multi_face if self.cfg.multi_face is not None else preset.multi_face
@@ -61,12 +90,21 @@ class FaceSwapPipeline:
         )
 
         infer_ms = 0.0
-        run_detect = (self._frame_i % max(1, preset.detect_interval)) == 0
-        if run_detect or not hasattr(self, "_last_boxes"):
-            boxes = self.detector.detect(frame_bgr)
+        if self._async is not None:
+            self._async.submit(frame_bgr)
+            boxes = self._async.latest()
+            if boxes is None:  # first frame: nothing detected yet
+                boxes = self.detector.detect(frame_bgr)
             self._last_boxes = boxes
         else:
-            boxes = self._last_boxes
+            run_detect = (self._frame_i % max(1, preset.detect_interval)) == 0
+            if run_detect or not hasattr(self, "_last_boxes"):
+                boxes = self.detector.detect(frame_bgr)
+                self._last_boxes = boxes
+            else:
+                boxes = self._last_boxes
+        fresh = self._async is not None or boxes is not getattr(self, "_boxes_prev_frame", None)
+        self._boxes_prev_frame = boxes
 
         out = frame_bgr
         if not boxes:
@@ -84,6 +122,11 @@ class FaceSwapPipeline:
                 result = self.swapper.swap(crop)
                 infer_ms += result.inference_ms
                 prev = self._prev_faces.get(i)
+                if fresh:
+                    alpha = motion_scaled_smoothing(smooth, self._prev_boxes.get(i), box)
+                    self._alpha[i] = alpha
+                else:  # reused box: it can't show motion, keep the last measured weight
+                    alpha = self._alpha.get(i, 0.0)
                 out = paste_face(
                     out,
                     result.face_bgr,
@@ -91,15 +134,32 @@ class FaceSwapPipeline:
                     feather=feather,
                     color_match=color,
                     temporal_prev=prev,
-                    temporal_smooth=smooth,
+                    temporal_smooth=alpha,
                 )
                 self._prev_faces[i] = result.face_bgr
+                self._prev_boxes[i] = box
 
-        out = apply_watermark(out, enabled=self.cfg.watermark)
         total_ms = (time.perf_counter() - t0) * 1000
         m = self.metrics.record(inference_ms=infer_ms, total_ms=total_ms)
         self._frame_i += 1
         return out, m
+
+
+def motion_scaled_smoothing(smooth: float, prev: FaceBox | None, cur: FaceBox, full_at: float = 0.04) -> float:
+    """Temporal blend weight that fades out as the face moves.
+
+    Blending the previous swapped crop is only valid while the face is (almost)
+    still inside the crop; with head motion it produced a visible double face.
+    Displacement is measured relative to face size; beyond ``full_at`` of the
+    box width per frame no blending happens.
+    """
+    if prev is None or smooth <= 0:
+        return 0.0
+    dx = (cur.x + cur.w / 2) - (prev.x + prev.w / 2)
+    dy = (cur.y + cur.h / 2) - (prev.y + prev.h / 2)
+    ds = abs(cur.w - prev.w)
+    motion = (float(np.hypot(dx, dy)) + ds) / max(1.0, float(cur.w))
+    return float(smooth * max(0.0, 1.0 - motion / full_at))
 
 
 def open_capture(source: int | str):

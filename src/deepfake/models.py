@@ -22,6 +22,15 @@ ALPHAFACE_REPO = "https://github.com/andrewyu90/Alphaface_Official.git"
 # Checksums unknown until first verified download — stored after user ack install.
 # Placeholder None means "record checksum on first successful install".
 
+# Practical-RIFE weights, mirrored as GitHub release assets by vs-rife (MIT).
+# SHA-256 pinned from the files verified on 2026-09-22; a mismatch aborts install.
+RIFE_RELEASE = "https://github.com/HolyWu/vs-rife/releases/download/model"
+RIFE_WEIGHTS: dict[str, str] = {
+    "4.25": "6615790efd627772917205db291f51cd392528a157ecbb2ecaeec3bff8eb6de2",
+    "4.25.lite": "81cdba223fe72a120130cc8552e5d2ecac824259d406f0c15323b3decf96b8b1",
+    "4.26": "45c7f74156704769dc9f85cfcaf8552e1e926f9399dcfa3a553dee88fac6f53f",
+}
+
 CATALOG: dict[str, dict[str, Any]] = {
     "alphaface": {
         "name": "alphaface",
@@ -44,6 +53,21 @@ CATALOG: dict[str, dict[str, Any]] = {
             "alphaface_demo.pt": ALPHAFACE_MAIN_DRIVE_ID,
             "arcface.pt": ALPHAFACE_ARCFACE_DRIVE_ID,
         },
+    },
+    "rife": {
+        "name": "rife",
+        "backend": "framegen",
+        "source": f"{RIFE_RELEASE}/flownet_v{{4.25,4.25.lite,4.26}}.pkl (Practical-RIFE weights)",
+        "paper": "arXiv:2011.06294 (ECCV 2022)",
+        "code_license": "MIT (hzwer/Practical-RIFE; HolyWu/vs-rife)",
+        "weights_license": "MIT (released with Practical-RIFE)",
+        "size_hint": "~25 MB per variant (3 variants, ~74 MB)",
+        "checksum": RIFE_WEIGHTS,
+        "install": "https+sha256 → safetensors",
+        "notes": (
+            "Real-time frame interpolation for --frame-gen. Downloads are SHA-256 "
+            "verified, loaded with torch weights_only and re-saved as safetensors."
+        ),
     },
     "inswapper": {
         "name": "inswapper",
@@ -111,6 +135,8 @@ def _looks_installed(name: str, path: Path) -> bool:
         return (path / "alphaface_demo.pt").is_file() or any(path.glob("*.pt"))
     if name == "inswapper":
         return any(path.glob("*.onnx")) or (path / "READY").is_file()
+    if name == "rife":
+        return (path / "flownet_v4.25.safetensors").is_file() or (path / "flownet_v4.25.pkl").is_file()
     return any(path.iterdir())
 
 
@@ -179,6 +205,8 @@ def install_model(name: str, *, yes: bool = False) -> str:
         return _install_alphaface(target, meta)
     if name == "inswapper":
         return _install_inswapper(target, meta)
+    if name == "rife":
+        return _install_rife(target)
     raise RuntimeError(f"no installer for {name}")
 
 
@@ -250,7 +278,7 @@ def _install_inswapper(target: Path, meta: dict[str, Any]) -> str:
             "Weights may download on first inference into InsightFace's cache — "
             "NON-COMMERCIAL research terms apply."
         )
-    except ImportError:
+    except ImportError as err:
         (target / "INSTALL_HINT.txt").write_text(
             "pip install insightface onnxruntime-gpu  # or onnxruntime for CPU\n"
             "Then re-run: deepfake models install inswapper --yes\n",
@@ -260,4 +288,43 @@ def _install_inswapper(target: Path, meta: dict[str, Any]) -> str:
             "insightface package not installed. "
             "Install with: pip install insightface onnxruntime  (GPU: onnxruntime-gpu). "
             "Models are NON-COMMERCIAL research. Then re-run with --yes."
-        )
+        ) from err
+
+
+def _install_rife(target: Path) -> str:
+    messages: list[str] = []
+    for variant, digest in RIFE_WEIGHTS.items():
+        st = target / f"flownet_v{variant}.safetensors"
+        if st.is_file():
+            messages.append(f"exists: {st.name}")
+            continue
+        pkl = target / f"flownet_v{variant}.pkl"
+        part = pkl.with_suffix(".pkl.part")
+        url = f"{RIFE_RELEASE}/flownet_v{variant}.pkl"
+        messages.append(f"downloading {url}")
+        urllib.request.urlretrieve(url, part)  # noqa: S310 — fixed https URL, verified below
+        got = file_sha256(part)
+        if got != digest:
+            part.unlink(missing_ok=True)
+            raise RuntimeError(f"SHA-256 mismatch for RIFE {variant}: expected {digest}, got {got}")
+        part.rename(pkl)
+        try:
+            import torch
+            from safetensors.torch import save_file
+
+            sd = torch.load(str(pkl), map_location="cpu", weights_only=True)
+            sd = {k.replace("module.", ""): v.contiguous() for k, v in sd.items() if k.startswith("module.")}
+            save_file(sd, str(st), metadata={"source": url, "sha256_of_source": digest, "license": "MIT"})
+            pkl.unlink()
+            messages.append(f"verified + converted → {st.name}")
+        except ImportError:
+            messages.append(f"verified {pkl.name} (install safetensors to convert; loaded weights_only)")
+    (target / "LICENSE_NOTES.txt").write_text(
+        "RIFE / Practical-RIFE — MIT, Copyright (c) 2021 hzwer. https://github.com/hzwer/Practical-RIFE\n"
+        "Release mirror + refactored IFNet: vs-rife — MIT, Copyright (c) 2021 HolyWu.\n"
+        "Paper: Huang et al., Real-Time Intermediate Flow Estimation for Video Frame Interpolation, "
+        "ECCV 2022 (arXiv:2011.06294)\n",
+        encoding="utf-8",
+    )
+    _mark_installed("rife", {"variants": sorted(RIFE_WEIGHTS), "sha256": RIFE_WEIGHTS})
+    return "RIFE frame-generation weights ready:\n" + "\n".join(messages)

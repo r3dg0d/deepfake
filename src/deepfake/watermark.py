@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-
-DEFAULT_LABEL = "SYNTHETIC MEDIA — disclosed demo"
+# ASCII only: OpenCV's Hershey fonts render non-ASCII (e.g. an em dash) as "???".
+DEFAULT_LABEL = "SYNTHETIC MEDIA - disclosed demo"
 
 
 def apply_watermark(

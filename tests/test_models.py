@@ -14,7 +14,7 @@ def test_list_models(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     rows = list_models()
     names = {r.name for r in rows}
-    assert names == {"alphaface", "inswapper"}
+    assert names == {"alphaface", "inswapper", "rife"}
     assert all(r.installed is False or r.installed is True for r in rows)
 
 
