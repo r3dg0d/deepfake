@@ -56,17 +56,60 @@ deepfake virtualcam --source person.jpg --consent-ack --v4l2 /dev/video10
 # Optional fakeperson synthetic identity
 deepfake webcam --identity alice --consent-ack
 
-# Benchmark detect/loop overhead (full swap needs models)
-deepfake benchmark --frames 60 --consent-ack
+# Real benchmark: swap only vs swap + AI frame generation (720p/1080p)
+deepfake benchmark --consent-ack
+deepfake benchmark --json --consent-ack > bench.json
 ```
+
+### AI frame generation (`--frame-gen`)
+
+Doubles or triples the presented frame rate by **interpolating** between swapped
+frames with RIFE (Practical-RIFE 4.25) instead of running AlphaFace on every
+displayed frame. Generated frames are real in-betweens at the exact output
+timestamp; nothing is duplicated to inflate the counter (late slots are
+re-sent as *held* frames and reported separately).
+
+```bash
+deepfake models install rife --yes                   # ~74 MB, MIT, SHA-256 pinned
+deepfake webcam --source person.jpg --consent-ack --frame-gen          # 2x
+deepfake webcam --source person.jpg --consent-ack --frame-gen 3x
+deepfake webcam --source person.jpg --consent-ack --output-fps 60      # picks the multiplier
+deepfake webcam --source person.jpg --consent-ack --frame-gen auto     # measures, then decides
+deepfake virtualcam --source person.jpg --consent-ack --frame-gen 2x --preset latency
+deepfake video in.mp4 --source person.jpg --consent-ack --frame-gen 2x -o out60.mp4
+```
+
+| Flag | Meaning |
+|---|---|
+| `--frame-gen [2x\|3x\|4x\|auto]` | enable (bare flag = 2x); off by default |
+| `--no-frame-gen` | force off |
+| `--output-fps 60\|120` | target presented rate (implies frame generation) |
+| `--frame-gen-backend rife` | backend (pluggable, see `deepfake/framegen/registry.py`) |
+| `--frame-gen-model 4.25\|4.25.lite\|4.26` | RIFE variant (default from `--preset`) |
+| `--preset latency\|balanced\|quality` | latency budget 120/200/300 ms, RIFE lite/4.25/4.26, swap bf16/bf16/fp32 |
+| `--swap-precision auto\|fp32\|bf16` | AlphaFace precision (bf16 ≈ 40 % faster, measured) |
+
+Measured on an RTX 4090 (30 fps camera, 2026-09-22):
+
+| Res | Mode | Output fps (new frames) | Capture→sink latency |
+|---|---|---|---|
+| 720p | off | 30.0 | 28 ms |
+| 720p | 2x | 59.5 | 82 ms |
+| 720p | 3x | 89.7 | 87 ms |
+| 1080p | off | 30.0 | 31 ms |
+| 1080p | 2x | 59.4 | 128 ms |
+
+Interpolation needs the *next* swapped frame, so it always adds at least one
+source interval of latency — that is why it is opt-in. Design, backend
+comparison, pacing and full numbers: [docs/frame-generation.md](docs/frame-generation.md).
 
 ### Presets
 
 | Preset | Intent |
 |--------|--------|
-| `low-latency` | 640×480 @ 30, sparse detect, light blend |
+| `low-latency` (alias `latency`) | 640×480 @ 30, sparse detect, light blend |
 | `balanced` | 960×540 @ 24, color match (default) |
-| `high-quality` | 1280×720 @ 24, multi-face, stronger temporal smooth |
+| `high-quality` (alias `quality`) | 1280×720 @ 24, multi-face, stronger temporal smooth |
 
 ### Controls (common flags)
 
@@ -82,7 +125,19 @@ deepfake benchmark --frames 60 --consent-ack
 
 ### Live metrics
 
-FPS, inference latency, total frame latency, dropped frames, VRAM (when CUDA/torch present).
+Once per second: camera fps, swap fps and latency, output fps (new frames
+only), frame-generation cost per frame, generated/held/late counts, queue
+depth, capture→sink latency, dropped source frames, GPU utilisation and VRAM.
+
+### v4l2loopback on NixOS
+
+The module has to be part of the kernel package set:
+
+```nix
+boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
+boot.kernelModules = [ "v4l2loopback" ];
+boot.extraModprobeConfig = ''options v4l2loopback devices=1 video_nr=10 card_label="deepfake" exclusive_caps=1'';
+```
 
 ## Models & licenses
 
@@ -90,6 +145,7 @@ FPS, inference latency, total frame latency, dropped frames, VRAM (when CUDA/tor
 |-------|------|---------|-------|
 | **alphaface** | MIT (upstream) | **Undocumented** (Google Drive) | We **refuse to redistribute** weights; installer downloads with `--yes` ack + checksum record |
 | **inswapper** | MIT (InsightFace code) | **Non-commercial** research | Fallback behind `models install`; commercial use needs InsightFace license |
+| **rife** | MIT (Practical-RIFE; vs-rife refactor) | MIT | Frame generation; SHA-256 verified, converted to safetensors |
 
 Our wrapper code is **MIT**. We do **not** relicense AlphaFace. See [NOTICE](NOTICE).
 
@@ -98,8 +154,10 @@ Our wrapper code is **MIT**. We do **not** relicense AlphaFace. See [NOTICE](NOT
 1. Open webcam/video via OpenCV  
 2. Detect faces (OpenCV Haar; YuNet/InsightFace optional)  
 3. Call AlphaFace when installed **or** InsightFace inswapper **or** clear error with install instructions  
-4. Composite + optional watermark  
-5. Output to window / file / ffmpeg / gstreamer / v4l2loopback  
+4. Composite (oval mask, LAB colour match, motion-aware temporal smoothing)  
+5. Optional RIFE frame generation on its own CUDA stream + paced output  
+6. Disclosure watermark on every presented frame  
+7. Output to window / file / ffmpeg / gstreamer / v4l2loopback  
 
 See [STATUS.md](STATUS.md) for what works on a CUDA-less box vs with weights.
 

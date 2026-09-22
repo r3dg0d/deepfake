@@ -16,4 +16,18 @@ InsightFace fallback (optional)
   Pretrained models: NON-COMMERCIAL research unless commercially licensed.
   https://github.com/deepinsight/insightface
 
+RIFE / Practical-RIFE (frame generation)
+  Repository: https://github.com/hzwer/Practical-RIFE
+  Copyright (c) 2021 hzwer — MIT License (code and released weights)
+  Paper: Huang, Zhang, Heng, Shi, Zhou, "Real-Time Intermediate Flow Estimation for Video Frame
+         Interpolation", ECCV 2022, arXiv:2011.06294
+  IFNet refactor + weight mirror: https://github.com/HolyWu/vs-rife
+  Copyright (c) 2021 HolyWu — MIT License
+  src/deepfake/framegen/rife_arch.py is derived from these; weights are downloaded (SHA-256 pinned),
+  not vendored.
+
+Benchmark face (src/deepfake/assets/bench_face.jpg)
+  A synthetic, fictional person generated with a local image model for this project. Not a real
+  person.
+
 Do not strip upstream copyright notices when vendoring AlphaFace code.

@@ -1,4 +1,26 @@
-## Unreleased
+## 0.2.0 — 2026-09-22
+
+### Added
+- AI frame generation (`--frame-gen [2x|3x|4x|auto]`, `--output-fps`, `--no-frame-gen`,
+  `--frame-gen-backend`, `--frame-gen-model`) using RIFE / Practical-RIFE 4.25, 4.25-lite, 4.26
+  behind a swappable `FrameGenerationBackend` interface.
+- Timeline-based pacing: output slots on a constant-rate grid, interpolation at each slot's exact
+  time, adaptive bounded delay, held/late accounting, overload shedding.
+- Threaded live pipeline (capture / swap / frame-gen / pacer) with per-second stats: input, swap and
+  output fps (new frames only), latencies, generated/held/late, queue depth, GPU util, VRAM.
+- `deepfake benchmark` rewritten: real AlphaFace + RIFE runs at 720p/1080p, with and without frame
+  generation, `--json`, and a measured recommendation.
+- `deepfake models install rife --yes` (SHA-256 pinned, converted to safetensors).
+- Presets `latency` / `quality` aliases; `--swap-precision auto|fp32|bf16`.
+
+### Changed
+- AlphaFace identity code computed once per source instead of every frame.
+- Haar detection on a ≤480 px copy; asynchronous detection in live mode.
+- Temporal face smoothing fades out with head motion (fixes double-face ghosting).
+- Watermark label is ASCII (Hershey fonts rendered the em dash as `???`).
+- Upstream AlphaFace prints go to stderr so `--json` output stays clean.
+
+## Unreleased (pre-0.2.0 notes)
 
 - Wire AlphaFace Swapper end-to-end (CUDA torch, real Drive weights path).
 - Fix face paste geometry: crop and paste share the same square box.
