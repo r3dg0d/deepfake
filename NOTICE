@@ -1,0 +1,19 @@
+deepfake (this wrapper)
+  Copyright 2026 r3dg0d
+  Licensed under the MIT License — see LICENSE.
+
+AlphaFace upstream (optional vendor checkout / research dependency)
+  Repository: https://github.com/andrewyu90/Alphaface_Official
+  Copyright 2026 Jongmin Andrew Yu
+  Code license: MIT
+  Paper: Yu et al., "AlphaFace: High Fidelity and Real-time Face Swapper Robust to Facial Pose",
+         arXiv:2601.16429, 2026. https://arxiv.org/abs/2601.16429
+  Weights: hosted on Google Drive by upstream; license undocumented.
+           This project does NOT redistribute those weights.
+
+InsightFace fallback (optional)
+  Code: MIT (InsightFace)
+  Pretrained models: NON-COMMERCIAL research unless commercially licensed.
+  https://github.com/deepinsight/insightface
+
+Do not strip upstream copyright notices when vendoring AlphaFace code.

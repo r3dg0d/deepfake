@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deepfake"
+version = "0.1.0"
+description = "Linux real-time face-swap CLI wrapping AlphaFace research (disclosed synthetic media)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "r3dg0d" }]
+keywords = ["faceswap", "alphaface", "vfx", "synthetic-media", "cli", "research"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Video",
+]
+dependencies = [
+  "click>=8.1",
+  "numpy>=1.26",
+  "opencv-python-headless>=4.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+cuda = []  # torch/cuda installed by user for AlphaFace; not forced
+insightface = ["insightface>=0.7", "onnxruntime>=1.16"]
+gdown = ["gdown>=5.0"]
+
+[project.scripts]
+deepfake = "deepfake.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deepfake"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/deepfake", "tests", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md", "STATUS.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+  "gpu: requires CUDA and installed weights (skipped by default)",
+]
