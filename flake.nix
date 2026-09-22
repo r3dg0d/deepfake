@@ -15,14 +15,17 @@
         # `devices` / `models list` / `--help` work without NVIDIA.
         deepfake = python.pkgs.buildPythonApplication {
           pname = "deepfake";
-          version = "0.1.0";
+          version = "0.2.0";
           src = ./.;
           format = "pyproject";
           nativeBuildInputs = with python.pkgs; [ hatchling ];
+          # nixpkgs ships OpenCV as `opencv4`, not the PyPI `opencv-python-headless` dist.
+          pythonRemoveDeps = [ "opencv-python-headless" ];
           propagatedBuildInputs = with python.pkgs; [
             click
             numpy
             opencv4
+            rich
           ];
           meta = with pkgs.lib; {
             description = "Linux real-time face-swap CLI (AlphaFace wrapper)";
@@ -42,7 +45,9 @@
             python.pkgs.click
             python.pkgs.numpy
             python.pkgs.opencv4
+            python.pkgs.rich
             python.pkgs.pytest
+            python.pkgs.ruff
             pkgs.ffmpeg
             pkgs.v4l-utils
           ];
