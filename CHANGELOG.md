@@ -1,3 +1,10 @@
+## Unreleased
+
+- Wire AlphaFace Swapper end-to-end (CUDA torch, real Drive weights path).
+- Fix face paste geometry: crop and paste share the same square box.
+- Oval soft mask + LAB color match; face-crop identity before ArcFace.
+- Quickshell matrix overlay under overlays/deepfake-preview.
+
 # Changelog
 
 ## 0.1.0 — 2026-09-22

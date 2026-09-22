@@ -25,19 +25,105 @@ class NullSink:
 
 
 class PreviewSink:
-    def __init__(self, title: str = "deepfake") -> None:
-        import cv2
+    """Wayland-friendly preview: JPEG + stats JSON for Quickshell overlay."""
 
-        self._cv2 = cv2
+    def __init__(self, title: str = "deepfake") -> None:
+        import os
+        import time
+        from pathlib import Path as P
+
         self.title = title
+        self._use_cv = os.environ.get("DEEPFAKE_OPENCV_PREVIEW", "").strip() in ("1", "true", "yes")
+        self._cv2 = None
+        if self._use_cv:
+            import cv2
+
+            self._cv2 = cv2
+        self._dir = P.home() / ".local/state/deepfake"
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._frame_path = self._dir / "preview.png"
+        self._tmp_path = self._dir / "preview.png.tmp"
+        self._stats_path = self._dir / "preview.json"
+        self._times: list[float] = []
+        self._frames = 0
+        self._t0 = time.monotonic()
+        self._last_write = 0.0
+        self._min_interval = 1.0 / 20.0
 
     def write(self, frame_bgr: np.ndarray) -> None:
-        self._cv2.imshow(self.title, frame_bgr)
-        self._cv2.waitKey(1)
+        import json
+        import os
+        import time
+
+        import cv2
+
+        now = time.monotonic()
+        self._frames += 1
+        self._times.append(now)
+        cutoff = now - 1.0
+        while self._times and self._times[0] < cutoff:
+            self._times.pop(0)
+        fps = float(len(self._times))
+
+        if self._use_cv and self._cv2 is not None:
+            try:
+                self._cv2.imshow(self.title, frame_bgr)
+                self._cv2.waitKey(1)
+            except Exception:
+                self._use_cv = False
+
+        if now - self._last_write < self._min_interval:
+            return
+        self._last_write = now
+
+        h, w = frame_bgr.shape[:2]
+        out = frame_bgr
+        max_w = 640
+        if w > max_w:
+            scale = max_w / float(w)
+            out = cv2.resize(frame_bgr, (int(w * scale), int(h * scale)))
+        ok = False
+        try:
+            ok = bool(cv2.imwrite(str(self._tmp_path), out))
+        except Exception:
+            ok = False
+        if not ok:
+            # headless opencv builds often lack jpeg/png writers — use Pillow
+            from PIL import Image
+            rgb = cv2.cvtColor(out, cv2.COLOR_BGR2RGB)
+            Image.fromarray(rgb).save(self._tmp_path, format="PNG")
+            ok = True
+        if ok:
+            os.replace(self._tmp_path, self._frame_path)
+        stats = {
+            "active": True,
+            "fps": round(fps, 1),
+            "frames": self._frames,
+            "width": int(w),
+            "height": int(h),
+            "path": str(self._frame_path),
+            "uptime_s": round(now - self._t0, 1),
+            "title": self.title,
+            "ts": now,
+        }
+        newline = chr(10)
+        self._stats_path.write_text(json.dumps(stats) + newline)
 
     def close(self) -> None:
+        if self._use_cv and self._cv2 is not None:
+            try:
+                self._cv2.destroyWindow(self.title)
+            except Exception:
+                pass
         try:
-            self._cv2.destroyWindow(self.title)
+            import json
+
+            data = {}
+            if self._stats_path.exists():
+                data = json.loads(self._stats_path.read_text() or "{}")
+            data["active"] = False
+            newline = chr(10)
+            self._stats_path.write_text(json.dumps(data) + newline)
         except Exception:
             pass
 
@@ -217,11 +303,7 @@ def create_sink(
 ) -> OutputSink:
     sinks: list[OutputSink] = []
     if preview:
-        try:
-            sinks.append(PreviewSink())
-        except Exception:
-            # headless
-            pass
+        sinks.append(PreviewSink())
     if output_video is not None:
         sinks.append(VideoFileSink(output_video, fps, (width, height)))
     if ffmpeg_args:

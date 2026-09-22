@@ -80,14 +80,14 @@ class FaceSwapPipeline:
                 selected = [boxes[idx]]
 
             for i, box in enumerate(selected):
-                crop = align_crop(frame_bgr, box, size=256)
+                crop, paste_box = align_crop(frame_bgr, box, size=256, pad=0.35)
                 result = self.swapper.swap(crop)
                 infer_ms += result.inference_ms
                 prev = self._prev_faces.get(i)
                 out = paste_face(
                     out,
                     result.face_bgr,
-                    box,
+                    paste_box,
                     feather=feather,
                     color_match=color,
                     temporal_prev=prev,
