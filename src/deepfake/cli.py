@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 import click
@@ -30,7 +32,7 @@ def _common_io_options(fn):
             "source_path",
             type=click.Path(path_type=Path, exists=False),
             default=None,
-            help="Source identity face image (person.jpg)",
+            help="Face image to swap in (remembered for next time).",
         ),
         click.option(
             "--identity",
@@ -57,7 +59,7 @@ def _common_io_options(fn):
         click.option("--temporal-smooth", type=float, default=None),
         click.option("--backend", type=click.Choice(["auto", "alphaface", "inswapper", "passthrough"]), default="auto"),
         click.option("--watermark/--no-watermark", default=True, show_default=True),
-        click.option("--consent-ack", is_flag=True, help="Acknowledge disclosed synthetic media / consent framing"),
+        click.option("--consent-ack", is_flag=True, hidden=True),
         click.option("--preview/--no-preview", default=True),
         click.option("-o", "--output", "output_video", type=click.Path(path_type=Path), default=None),
         click.option("--ffmpeg-out", multiple=True, help="Extra ffmpeg argv after raw input (repeatable)"),
@@ -106,16 +108,54 @@ def _common_io_options(fn):
     return fn
 
 
+def _settings_path() -> Path:
+    from .paths import config_home
+
+    return config_home() / "settings.json"
+
+
+def _load_settings() -> dict:
+    try:
+        return json.loads(_settings_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_settings(data: dict) -> None:
+    p = _settings_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 def _resolve_source(source_path: Path | None, identity: str | None) -> Path:
+    """--source / --identity, else the last face used, else ask (terminal only)."""
+    settings = _load_settings()
     try:
         p = resolve_source_image(str(source_path) if source_path else None, identity)
     except FileNotFoundError as e:
         raise click.ClickException(str(e)) from e
+    if p is None and settings.get("source") and Path(settings["source"]).is_file():
+        p = Path(settings["source"])
+        click.echo(f"deepfake: using last face {p} (change with --source)", err=True)
     if p is None:
-        raise click.ClickException(
-            "Provide --source person.jpg (or --identity <fakeperson-name>). "
-            f"fakeperson identities found: {list_fakeperson_identities() or '(none)'}"
-        )
+        ids = list_fakeperson_identities()
+        if not sys.stdin.isatty():
+            raise click.ClickException(
+                "No face image yet: pass --source face.jpg once (it is remembered)"
+                + (f" or --identity one of: {', '.join(ids)}" if ids else "")
+            )
+        hint = f" or a fakeperson identity ({', '.join(ids)})" if ids else ""
+        answer = click.prompt(f"Face image to swap in{hint}", type=str).strip()
+        try:
+            p = resolve_source_image(None, answer) if answer in ids else resolve_source_image(
+                os.path.expanduser(answer), None
+            )
+        except FileNotFoundError as e:
+            raise click.ClickException(str(e)) from e
+    p = p.resolve()
+    if settings.get("source") != str(p):
+        settings["source"] = str(p)
+        _save_settings(settings)
     return p
 
 
@@ -306,8 +346,16 @@ def _parse_input_device(raw: str | None, default: int = 0):
 def main(ctx: click.Context) -> None:
     """Linux real-time face-swap CLI (AlphaFace research wrapper).
 
-    Framing: research, VFX, avatars, filmmaking, consenting demos, disclosed
-    synthetic media. No anonymity claims. Consent gates + optional watermark.
+    \b
+    Quick start:
+      deepfake webcam --source face.jpg   first time (the face is remembered)
+      deepfake webcam                     live preview
+      deepfake virtualcam                 virtual camera for OBS / browsers / calls
+      deepfake video clip.mp4             swap a file
+      deepfake devices                    cameras and virtual cameras
+
+    For research, VFX, avatars, filmmaking and consenting demos; output is
+    watermarked "SYNTHETIC MEDIA" by default.
     """
     ctx.ensure_object(dict)
     ensure_dirs()
@@ -369,15 +417,22 @@ def video_cmd(input_video: Path, **kwargs):
 @click.option(
     "--v4l2",
     "v4l2_path",
-    default="/dev/video10",
-    show_default=True,
-    help="v4l2loopback device (OBS-friendly)",
+    default=None,
+    help="v4l2loopback device (default: auto-detect, e.g. /dev/video10 'deepfake')",
 )
-def virtualcam_cmd(v4l2_path: str, **kwargs):
-    """Stream swapped frames to a v4l2loopback virtual webcam."""
+def virtualcam_cmd(v4l2_path: str | None, **kwargs):
+    """Stream swapped frames to a virtual webcam (OBS, browsers, video calls)."""
+    from .devices import LOOPBACK_HELP, find_loopback_device
+
+    target = kwargs.get("output_device") or v4l2_path or find_loopback_device()
+    if not target or not Path(target).exists():
+        raise click.ClickException(LOOPBACK_HELP)
+    if not os.access(target, os.W_OK):
+        raise click.ClickException(f"{target} is not writable by you (need the 'video' group)")
     require_consent(ack=kwargs.get("consent_ack", False), watermark=kwargs.get("watermark", True))
     source = _resolve_source(kwargs.get("source_path"), kwargs.get("identity"))
-    kwargs["output_device"] = kwargs.get("output_device") or v4l2_path
+    kwargs["output_device"] = target
+    click.echo(f"deepfake: virtual camera → {target} (select 'deepfake' in OBS / your browser)", err=True)
     kwargs["preview"] = kwargs.get("preview", False)
     cfg = _cfg_from_kwargs(kwargs)
     try:
@@ -386,6 +441,21 @@ def virtualcam_cmd(v4l2_path: str, **kwargs):
         raise
     except Exception as e:  # noqa: BLE001
         raise click.ClickException(str(e)) from e
+
+
+@main.command("help")
+@click.argument("command", required=False)
+@click.pass_context
+def help_cmd(ctx: click.Context, command: str | None):
+    """Show help (deepfake help webcam)."""
+    parent = ctx.parent
+    if command:
+        cmd = main.get_command(parent, command)
+        if cmd is None:
+            raise click.ClickException(f"no such command: {command}")
+        click.echo(cmd.get_help(click.Context(cmd, info_name=command, parent=parent)))
+    else:
+        click.echo(main.get_help(parent))
 
 
 @main.command("devices")
@@ -416,7 +486,7 @@ def devices_cmd(as_json: bool):
 @click.option("--frame-gen-model", type=click.Choice(sorted(RIFE_VARIANTS)), default="4.25", show_default=True)
 @click.option("--swap-precision", type=click.Choice(["fp32", "bf16"]), default="bf16", show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable report.")
-@click.option("--consent-ack", is_flag=True)
+@click.option("--consent-ack", is_flag=True, hidden=True)
 def benchmark_cmd(resolutions, camera_fps, target_fps, seconds, frame_gen_model, swap_precision, as_json, consent_ack):
     """Measure swap-only vs swap+frame-generation on this GPU (real runs, no estimates).
 
