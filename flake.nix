@@ -15,7 +15,7 @@
         # `devices` / `models list` / `--help` work without NVIDIA.
         deepfake = python.pkgs.buildPythonApplication {
           pname = "deepfake";
-          version = "0.2.0";
+          version = "0.2.1";
           src = ./.;
           format = "pyproject";
           nativeBuildInputs = with python.pkgs; [ hatchling ];

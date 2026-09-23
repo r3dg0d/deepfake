@@ -9,7 +9,7 @@ Upstream AlphaFace is a **still/batch** research demo. This project adds a real 
 This tool is for **research, VFX, avatars, filmmaking, consenting demos, and disclosed synthetic media**.
 
 - **No anonymity claims.** Output is synthetic; disclose when required.
-- **Consent gates** (`--consent-ack` or `DEEPFAKE_CONSENT_ACK=1`) before live/video runs.
+- A **one-time notice** on first run (remembered in `~/.config/deepfake/consent.json`; scripts can pre-accept with `DEEPFAKE_CONSENT_ACK=1`).
 - **Synthetic-media watermark** on by default (`--no-watermark` to disable — you still must disclose by other means).
 - Use **only** identities and footage you own or have consent to process.
 - Misuse for non-consensual deepfakes, impersonation, fraud, or harassment is prohibited.
@@ -38,28 +38,22 @@ deepfake models install inswapper --yes
 ## Usage
 
 ```bash
-# Devices / models
-deepfake devices
+deepfake webcam --source face.jpg   # first run: pick the face (remembered afterwards)
+deepfake webcam                     # live swap with preview
+deepfake virtualcam                 # virtual camera "deepfake" for OBS, browsers, calls
+deepfake video input.mp4            # writes input_swapped.mp4
+deepfake devices                    # cameras + virtual cameras
+deepfake help                       # or: deepfake help webcam
+deepfake benchmark                  # real swap vs frame-generation measurements
 deepfake models list
 
-# Live webcam (requires --consent-ack and --source)
-deepfake webcam --source person.jpg --consent-ack --preset balanced
-deepfake webcam --source person.jpg --consent-ack --preset low-latency --device cuda
-
-# Video file
-deepfake video input.mp4 --source person.jpg --consent-ack -o out.mp4 --no-preview
-
-# Virtual webcam (v4l2loopback) — OBS-friendly
-sudo modprobe v4l2loopback devices=1 video_nr=10 card_label=deepfake
-deepfake virtualcam --source person.jpg --consent-ack --v4l2 /dev/video10
-
-# Optional fakeperson synthetic identity
-deepfake webcam --identity alice --consent-ack
-
-# Real benchmark: swap only vs swap + AI frame generation (720p/1080p)
-deepfake benchmark --consent-ack
-deepfake benchmark --json --consent-ack > bench.json
+# Optional fakeperson synthetic identity instead of an image
+deepfake webcam --identity alice
 ```
+
+The first run shows a short notice about consent and disclosure and asks once;
+after that no flags are needed. The last `--source` is remembered in
+`~/.config/deepfake/settings.json`.
 
 ### AI frame generation (`--frame-gen`)
 
@@ -71,12 +65,12 @@ re-sent as *held* frames and reported separately).
 
 ```bash
 deepfake models install rife --yes                   # ~74 MB, MIT, SHA-256 pinned
-deepfake webcam --source person.jpg --consent-ack --frame-gen          # 2x
-deepfake webcam --source person.jpg --consent-ack --frame-gen 3x
-deepfake webcam --source person.jpg --consent-ack --output-fps 60      # picks the multiplier
-deepfake webcam --source person.jpg --consent-ack --frame-gen auto     # measures, then decides
-deepfake virtualcam --source person.jpg --consent-ack --frame-gen 2x --preset latency
-deepfake video in.mp4 --source person.jpg --consent-ack --frame-gen 2x -o out60.mp4
+deepfake webcam --source person.jpg --frame-gen          # 2x
+deepfake webcam --source person.jpg --frame-gen 3x
+deepfake webcam --source person.jpg --output-fps 60      # picks the multiplier
+deepfake webcam --source person.jpg --frame-gen auto     # measures, then decides
+deepfake virtualcam --source person.jpg --frame-gen 2x --preset latency
+deepfake video in.mp4 --source person.jpg --frame-gen 2x -o out60.mp4
 ```
 
 | Flag | Meaning |
@@ -129,15 +123,30 @@ Once per second: camera fps, swap fps and latency, output fps (new frames
 only), frame-generation cost per frame, generated/held/late counts, queue
 depth, capture→sink latency, dropped source frames, GPU utilisation and VRAM.
 
-### v4l2loopback on NixOS
+### Virtual camera (v4l2loopback)
 
-The module has to be part of the kernel package set:
+`deepfake virtualcam` auto-detects a v4l2loopback device (preferring one
+labelled `deepfake`) and announces the real output rate with
+`v4l2loopback-ctl set-fps`, so OBS/browsers timestamp 60 fps frame-generated
+output correctly. On NixOS:
 
 ```nix
-boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
-boot.kernelModules = [ "v4l2loopback" ];
-boot.extraModprobeConfig = ''options v4l2loopback devices=1 video_nr=10 card_label="deepfake" exclusive_caps=1'';
+{ config, pkgs, ... }:
+let v4l2loopback = config.boot.kernelPackages.v4l2loopback; in {
+  boot.extraModulePackages = [ v4l2loopback ];
+  boot.kernelModules = [ "v4l2loopback" ];
+  boot.extraModprobeConfig = ''options v4l2loopback devices=1 video_nr=10 card_label="deepfake" exclusive_caps=1'';
+  # allow the `video` group to set the announced frame rate
+  services.udev.extraRules = ''
+    ACTION=="add", SUBSYSTEM=="video4linux", ATTR{name}=="deepfake", RUN+="${pkgs.coreutils}/bin/chgrp video /sys%p/format", RUN+="${pkgs.coreutils}/bin/chmod g+w /sys%p/format"
+  '';
+  environment.systemPackages = [ v4l2loopback.bin ];
+}
 ```
+
+After `nixos-rebuild switch` the module loads at boot; to load it right away:
+`sudo env MODULE_DIR=/run/current-system/kernel-modules/lib/modules modprobe v4l2loopback`.
+Other distros: `sudo modprobe v4l2loopback devices=1 video_nr=10 card_label=deepfake exclusive_caps=1`.
 
 ## Models & licenses
 

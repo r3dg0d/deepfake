@@ -29,6 +29,21 @@
 
 # Changelog
 
+## 0.2.1 — 2026-09-22
+
+### Changed
+- No flags needed: the consent notice is shown once and remembered; `--consent-ack` is hidden
+  (kept for scripts, as is `DEEPFAKE_CONSENT_ACK=1`).
+- `--source` is optional after first use (last face remembered); interactive prompt otherwise.
+- `deepfake help [command]`.
+- `virtualcam` auto-detects the v4l2loopback device, checks it is writable, and explains the
+  NixOS/other-distro setup when missing.
+
+### Fixed
+- Virtual camera advertised 30 fps while receiving 60 fps: the sink now calls
+  `v4l2loopback-ctl set-fps`, so consumers read 60/1 with monotonic timestamps; output is yuv420p.
+- Loopback devices were listed as `capture` in `deepfake devices`.
+
 ## 0.1.0 — 2026-09-22
 
 - Initial Linux CLI: `webcam`, `video`, `virtualcam`, `devices`, `benchmark`, `models list|install`.

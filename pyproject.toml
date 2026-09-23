@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deepfake"
-version = "0.2.0"
+version = "0.2.1"
 description = "Linux real-time face-swap CLI wrapping AlphaFace research (disclosed synthetic media)"
 readme = "README.md"
 license = "MIT"
