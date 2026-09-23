@@ -224,6 +224,33 @@ class GStreamerPipeSink:
         self._proc.wait(timeout=30)
 
 
+def announce_loopback_fps(device: str, fps: float) -> bool:
+    """Tell v4l2loopback the real frame rate so consumers (OBS, browsers) timestamp it right.
+
+    Without this the device advertises 30 fps and a 60 fps stream reaches
+    consumers with colliding timestamps. Needs ``v4l2loopback-ctl`` and write
+    access to the device's sysfs ``format`` attribute (see README udev rule).
+    """
+    from fractions import Fraction
+
+    ctl = shutil.which("v4l2loopback-ctl")
+    if not ctl:
+        return False
+    frac = Fraction(fps).limit_denominator(1001)
+    rate = f"{frac.numerator}/{frac.denominator}" if frac.denominator != 1 else str(frac.numerator)
+    proc = subprocess.run([ctl, "set-fps", device, rate], capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        import sys
+
+        print(
+            f"deepfake: could not set {device} to {rate} fps ({proc.stderr.strip()[:120]}); "
+            "consumers may assume 30 fps",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 class V4L2LoopbackSink:
     """Write frames to a v4l2loopback device (OBS-friendly virtual webcam)."""
 
@@ -233,13 +260,13 @@ class V4L2LoopbackSink:
         self._cv2 = cv2
         # Prefer pyv4l2 / ffmpeg; OpenCV VideoWriter with V4L2 may work on some systems.
         if not Path(device).exists():
-            raise RuntimeError(
-                f"{device} not found. Load v4l2loopback: "
-                "sudo modprobe v4l2loopback devices=1 video_nr=10 card_label=deepfake"
-            )
+            from ..devices import LOOPBACK_HELP
+
+            raise RuntimeError(f"{device} not found.\n\n{LOOPBACK_HELP}")
         # Use ffmpeg v4l2 output for reliability
         if not shutil.which("ffmpeg"):
             raise RuntimeError("ffmpeg required for v4l2loopback sink")
+        self.fps_announced = announce_loopback_fps(device, fps)
         cmd = [
             "ffmpeg",
             "-y",
@@ -253,6 +280,8 @@ class V4L2LoopbackSink:
             str(fps),
             "-i",
             "-",
+            "-pix_fmt",
+            "yuv420p",
             "-f",
             "v4l2",
             device,

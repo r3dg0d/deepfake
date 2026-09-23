@@ -40,7 +40,7 @@ def list_v4l2_devices() -> list[VideoDevice]:
         caps = sys_path / "device" / "interface"
         # Heuristic: v4l2loopback often has "Loopback" in name
         lower = name.lower()
-        if "loopback" in lower or "virtual" in lower:
+        if "loopback" in lower or "virtual" in lower or is_loopback(idx):
             kind = "output"
         else:
             kind = "capture"
@@ -97,3 +97,38 @@ def resolve_cuda(device: str | None) -> str:
         except Exception:
             return "cpu"
     return device
+
+
+def is_loopback(index: int) -> bool:
+    """True if /dev/video<index> is a v4l2loopback device.
+
+    Loopback nodes are virtual (no bus device) and expose v4l2loopback's
+    ``max_openers`` attribute; real cameras sit under a USB/PCI device.
+    """
+    node = Path(f"/sys/class/video4linux/video{index}")
+    try:
+        return (node / "max_openers").exists() or "/virtual/" in str(node.resolve())
+    except OSError:
+        return False
+
+
+def find_loopback_device(preferred_label: str = "deepfake") -> str | None:
+    """Pick the v4l2loopback node: one labelled ``preferred_label`` first, else any loopback."""
+    loops = [d for d in list_v4l2_devices() if is_loopback(d.index) or "loopback" in d.name.lower()]
+    for d in loops:
+        if preferred_label in d.name.lower():
+            return d.path
+    return loops[0].path if loops else None
+
+
+LOOPBACK_HELP = """No v4l2loopback virtual camera found.
+
+NixOS (declarative, survives reboots):
+  boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
+  boot.kernelModules = [ "v4l2loopback" ];
+  boot.extraModprobeConfig = ''options v4l2loopback devices=1 video_nr=10 card_label="deepfake" exclusive_caps=1'';
+then `sudo nixos-rebuild switch`. To load it before rebooting:
+  sudo env MODULE_DIR=/run/current-system/kernel-modules/lib/modules modprobe v4l2loopback
+
+Other distros:
+  sudo modprobe v4l2loopback devices=1 video_nr=10 card_label=deepfake exclusive_caps=1"""
