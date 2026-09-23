@@ -15,6 +15,8 @@ class RifeVariant:
 
 VARIANTS: dict[str, RifeVariant] = {
     "4.25": RifeVariant("4.25", 32, (16, 8, 4, 2, 1), 64),
-    "4.25.lite": RifeVariant("4.25.lite", 32, (16, 8, 4, 2, 1), 128),
-    "4.26": RifeVariant("4.26", 24, (32, 16, 8, 4, 1), 64),
+    # lite uses a narrower final IFBlock (c=24); matches flownet_v4.25.lite.safetensors
+    "4.25.lite": RifeVariant("4.25.lite", 24, (16, 8, 4, 2, 1), 128),
+    # installed 4.26 weights use the same final width as 4.25 (c=32)
+    "4.26": RifeVariant("4.26", 32, (32, 16, 8, 4, 1), 64),
 }

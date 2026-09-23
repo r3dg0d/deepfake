@@ -38,50 +38,67 @@ deepfake models install inswapper --yes
 ## Usage
 
 ```bash
-deepfake webcam --source face.jpg   # first run: pick the face (remembered afterwards)
-deepfake webcam                     # live swap with preview
-deepfake virtualcam                 # virtual camera "deepfake" for OBS, browsers, calls
-deepfake video input.mp4            # writes input_swapped.mp4
-deepfake devices                    # cameras + virtual cameras
-deepfake help                       # or: deepfake help webcam
-deepfake benchmark                  # real swap vs frame-generation measurements
-deepfake models list
-
-# Optional fakeperson synthetic identity instead of an image
-deepfake webcam --identity alice
+deepfake webcam                         # FrameGen + Quickshell start automatically
+deepfake webcam -f person.png           # first run / change face (remembered)
+deepfake virtualcam                     # virtual camera for OBS / browsers / calls
+deepfake virtualcam -f person.png
+deepfake video -i input.mp4 -f person.png -o output.mp4
+deepfake video -i input.mp4 -f person.png   # writes input-deepfake.mp4 (never overwrites)
+deepfake devices
+deepfake doctor                         # AlphaFace / CUDA / FrameGen / Quickshell / IPC
+deepfake benchmark                      # AlphaFace + FrameGen pipeline on this GPU
+deepfake config show
 ```
 
-The first run shows a short notice about consent and disclosure and asks once;
-after that no flags are needed. The last `--source` is remembered in
-`~/.config/deepfake/settings.json`.
+**Defaults:** AI frame generation is **on** (`auto`), and the matrix Quickshell widget
+starts with every processing mode. Escape hatches for debugging:
 
-### AI frame generation (`--frame-gen`)
+```bash
+deepfake webcam --frame-gen off
+deepfake webcam --no-widget
+deepfake webcam --frame-gen 3x --output-fps 120
+```
+
+The last `-f` / `--source` is remembered in `~/.config/deepfake/settings.json`.
+Preferences live in `~/.config/deepfake/config.toml` (created on first run):
+
+```toml
+frame_generation = "auto"
+quickshell = "auto"
+gpu = "auto"
+preset = "balanced"
+encoder = "auto"
+preview = true
+```
+
+### AI frame generation (automatic)
 
 Doubles or triples the presented frame rate by **interpolating** between swapped
-frames with RIFE (Practical-RIFE 4.25) instead of running AlphaFace on every
-displayed frame. Generated frames are real in-betweens at the exact output
-timestamp; nothing is duplicated to inflate the counter (late slots are
-re-sent as *held* frames and reported separately).
+frames with RIFE instead of duplicating frames. Generated frames are real
+in-betweens; held/late frames are reported separately in metrics and the widget.
 
 ```bash
 deepfake models install rife --yes                   # ~74 MB, MIT, SHA-256 pinned
-deepfake webcam --source person.jpg --frame-gen          # 2x
-deepfake webcam --source person.jpg --frame-gen 3x
-deepfake webcam --source person.jpg --output-fps 60      # picks the multiplier
-deepfake webcam --source person.jpg --frame-gen auto     # measures, then decides
-deepfake virtualcam --source person.jpg --frame-gen 2x --preset latency
-deepfake video in.mp4 --source person.jpg --frame-gen 2x -o out60.mp4
+deepfake webcam                                      # auto FrameGen (default)
+deepfake webcam --frame-gen 2x
+deepfake webcam --frame-gen 3x
+deepfake webcam --output-fps 60
+deepfake virtualcam --preset latency
+deepfake video -i in.mp4 -f person.png -o out60.mp4
 ```
 
 | Flag | Meaning |
 |---|---|
-| `--frame-gen [2x\|3x\|4x\|auto]` | enable (bare flag = 2x); off by default |
+| `--frame-gen [auto\|2x\|3x\|4x\|off]` | default **auto** (on); `off` disables |
 | `--no-frame-gen` | force off |
-| `--output-fps 60\|120` | target presented rate (implies frame generation) |
-| `--frame-gen-backend rife` | backend (pluggable, see `deepfake/framegen/registry.py`) |
-| `--frame-gen-model 4.25\|4.25.lite\|4.26` | RIFE variant (default from `--preset`) |
-| `--preset latency\|balanced\|quality` | latency budget 120/200/300 ms, RIFE lite/4.25/4.26, swap bf16/bf16/fp32 |
-| `--swap-precision auto\|fp32\|bf16` | AlphaFace precision (bf16 ≈ 40 % faster, measured) |
+| `--output-fps 60\|120` | target presented rate |
+| `--frame-gen-backend rife` | backend (pluggable) |
+| `--frame-gen-model 4.25\|4.25.lite\|4.26` | RIFE variant (from `--preset`) |
+| `--preset latency\|balanced\|quality` | latency budget + RIFE + swap precision |
+| `--widget / --no-widget` | desktop status widget (default auto/on) |
+
+If FrameGen fails to initialize, Deepfake **falls back** to native AlphaFace
+output, warns in the CLI and widget, and keeps running.
 
 Measured on an RTX 4090 (30 fps camera, 2026-09-22):
 
@@ -93,9 +110,7 @@ Measured on an RTX 4090 (30 fps camera, 2026-09-22):
 | 1080p | off | 30.0 | 31 ms |
 | 1080p | 2x | 59.4 | 128 ms |
 
-Interpolation needs the *next* swapped frame, so it always adds at least one
-source interval of latency — that is why it is opt-in. Design, backend
-comparison, pacing and full numbers: [docs/frame-generation.md](docs/frame-generation.md).
+Design, backend comparison, pacing and full numbers: [docs/frame-generation.md](docs/frame-generation.md).
 
 ### Presets
 

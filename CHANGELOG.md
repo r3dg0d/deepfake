@@ -1,3 +1,16 @@
+# Changelog
+
+## 0.3.0 — 2026-09-22
+
+- **FrameGen on by default** (`auto`) for `webcam`, `virtualcam`, and `video`.
+- **Quickshell widget auto-starts** with every processing session (IPC via `~/.local/state/deepfake/session.json`); `--no-widget` to disable.
+- Shared `DeepfakeSession` owns FrameGen policy, metrics IPC, widget lifecycle, and cleanup.
+- Graceful FrameGen fallback (warn + continue with native AlphaFace).
+- CLI simplified: `-f` face, `video -i/-o`, `doctor`, `config`; default video name `*-deepfake.mp4`.
+- Video encode via ffmpeg (NVENC when available) with audio mux from the source.
+- Fixed RIFE `4.25.lite` channel width so latency preset FrameGen loads correctly.
+- Richer widget metrics: Source / AlphaFace / FrameGen / Output FPS, latency, VRAM, progress.
+
 ## 0.2.0 — 2026-09-22
 
 ### Added

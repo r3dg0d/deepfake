@@ -37,9 +37,11 @@ class FrameGenSettings:
 def parse_frame_gen(value: str | None) -> tuple[bool, int | None]:
     """Parse ``--frame-gen [VALUE]``.
 
-    Accepts ``2x``/``3x``/``4x``, bare ``2``, ``auto`` (bench and decide),
-    ``on`` (default 2x), ``off``/``none``. Returns (enabled, factor);
+    Accepts ``2x``/``3x``/``4x``, bare ``2``, ``auto`` (pick multiplier),
+    ``on`` (2x), ``off``/``none``. Returns (enabled, factor);
     factor None with enabled means "auto".
+
+    ``None`` means unset at the parser layer (callers / config default to auto).
     """
     if value is None:
         return False, None

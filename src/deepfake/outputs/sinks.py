@@ -306,6 +306,113 @@ class V4L2LoopbackSink:
             self._proc.kill()
 
 
+
+class FFmpegVideoSink:
+    """Encode BGR frames with ffmpeg; optionally mux audio from the source file.
+
+    Prefers NVENC when available and ``encoder`` is auto/nvenc; falls back to libx264.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        fps: float,
+        size: tuple[int, int],
+        *,
+        audio_from: Path | str | None = None,
+        encoder: str = "auto",
+    ) -> None:
+        import shutil
+        import subprocess
+
+        if not shutil.which("ffmpeg"):
+            raise RuntimeError("ffmpeg not found on PATH")
+        width, height = size
+        self._wh = (width, height)
+        vcodec = self._pick_encoder(encoder)
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "bgr24",
+            "-s",
+            f"{width}x{height}",
+            "-r",
+            str(fps),
+            "-i",
+            "-",
+        ]
+        if audio_from is not None:
+            cmd += ["-i", str(audio_from)]
+        cmd += ["-map", "0:v:0"]
+        if audio_from is not None:
+            cmd += ["-map", "1:a:0?", "-c:a", "copy", "-shortest"]
+        cmd += ["-c:v", vcodec, "-pix_fmt", "yuv420p"]
+        if vcodec == "libx264":
+            cmd += ["-preset", "veryfast", "-crf", "18"]
+        elif "nvenc" in vcodec:
+            cmd += ["-preset", "p4", "-rc", "vbr", "-cq", "19"]
+        cmd.append(str(path))
+        self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        self._path = path
+
+    @staticmethod
+    def _pick_encoder(encoder: str) -> str:
+        import shutil
+        import subprocess
+
+        enc = (encoder or "auto").lower()
+        if enc in ("libx264", "x264", "cpu"):
+            return "libx264"
+        if enc in ("h264_nvenc", "nvenc"):
+            return "h264_nvenc"
+        # auto: probe
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg:
+            r = subprocess.run([ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, check=False)
+            if "h264_nvenc" in (r.stdout or ""):
+                return "h264_nvenc"
+        return "libx264"
+
+    def write(self, frame_bgr: np.ndarray) -> None:
+        if self._proc.stdin is None:
+            raise RuntimeError("ffmpeg stdin closed")
+        h, w = frame_bgr.shape[:2]
+        if (w, h) != self._wh:
+            import cv2
+
+            frame_bgr = cv2.resize(frame_bgr, self._wh)
+        try:
+            self._proc.stdin.write(frame_bgr.tobytes())
+        except BrokenPipeError as e:
+            err = (self._proc.stderr.read() if self._proc.stderr else b"").decode("utf-8", "replace")
+            raise RuntimeError(f"ffmpeg encode failed for {self._path}: {err.strip()}") from e
+
+    def close(self) -> None:
+        if self._proc.stdin:
+            try:
+                self._proc.stdin.close()
+            except OSError:
+                pass
+        try:
+            self._proc.wait(timeout=60)
+        except Exception:
+            self._proc.kill()
+        if self._proc.returncode not in (0, None):
+            err = ""
+            try:
+                if self._proc.stderr:
+                    err = self._proc.stderr.read().decode("utf-8", "replace")
+            except Exception:
+                pass
+            if err.strip():
+                raise RuntimeError(f"ffmpeg exited {self._proc.returncode}: {err.strip()[:400]}")
+
+
 class MultiSink:
     def __init__(self, sinks: list[OutputSink]) -> None:
         self.sinks = sinks
@@ -329,12 +436,21 @@ def create_sink(
     width: int = 640,
     height: int = 480,
     fps: float = 30.0,
+    audio_from: Path | str | None = None,
+    encoder: str = "auto",
 ) -> OutputSink:
     sinks: list[OutputSink] = []
     if preview:
         sinks.append(PreviewSink())
     if output_video is not None:
-        sinks.append(VideoFileSink(output_video, fps, (width, height)))
+        try:
+            sinks.append(
+                FFmpegVideoSink(
+                    output_video, fps, (width, height), audio_from=audio_from, encoder=encoder
+                )
+            )
+        except Exception:
+            sinks.append(VideoFileSink(output_video, fps, (width, height)))
     if ffmpeg_args:
         sinks.append(FFmpegPipeSink(ffmpeg_args, width, height, fps))
     if gstreamer_pipeline:

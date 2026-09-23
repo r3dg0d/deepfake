@@ -10,17 +10,20 @@ from pathlib import Path
 import click
 
 from . import __version__
+from .config import DeepfakeConfig, ensure_default_config, load_config, save_config
 from .consent import require_consent
 from .devices import format_devices, list_v4l2_devices, resolve_cuda
+from .doctor import render_doctor, run_doctor
 from .framegen.registry import BACKENDS as FRAMEGEN_BACKENDS
-from .framegen.settings import PRESET_FRAME_GEN, FrameGenSettings, factor_for, parse_frame_gen
+from .framegen.settings import FrameGenSettings
 from .framegen.variants import VARIANTS as RIFE_VARIANTS
 from .identity import list_fakeperson_identities, resolve_source_image
 from .models import install_model, list_models
 from .outputs.sinks import create_sink
 from .paths import ensure_dirs
 from .pipeline import build_config, run_loop
-from .presets import PRESET_ALIASES, PRESETS, framegen_preset_name
+from .presets import PRESET_ALIASES, PRESETS
+from .session import DeepfakeSession, resolve_frame_gen, try_init_framegen
 
 PRESET_CHOICES = sorted([*PRESETS, *PRESET_ALIASES])
 
@@ -28,6 +31,7 @@ PRESET_CHOICES = sorted([*PRESETS, *PRESET_ALIASES])
 def _common_io_options(fn):
     opts = [
         click.option(
+            "-f",
             "--source",
             "source_path",
             type=click.Path(path_type=Path, exists=False),
@@ -42,11 +46,10 @@ def _common_io_options(fn):
         click.option(
             "--preset",
             type=click.Choice(PRESET_CHOICES),
-            default="balanced",
-            show_default=True,
-            help="latency (=low-latency) | balanced | quality (=high-quality)",
+            default=None,
+            help="latency | balanced | quality (default from config.toml)",
         ),
-        click.option("--device", default="auto", show_default=True, help="cuda|cuda:0|cpu|auto"),
+        click.option("--device", default=None, help="cuda|cuda:0|cpu|auto (default from config)"),
         click.option("--input-device", "input_device", default=None, help="Capture index or /dev/videoN"),
         click.option("--output-device", "output_device", default=None, help="v4l2loopback path for virtualcam"),
         click.option("--width", type=int, default=None),
@@ -58,30 +61,30 @@ def _common_io_options(fn):
         click.option("--color-match/--no-color-match", default=None),
         click.option("--temporal-smooth", type=float, default=None),
         click.option("--backend", type=click.Choice(["auto", "alphaface", "inswapper", "passthrough"]), default="auto"),
-        click.option("--watermark/--no-watermark", default=True, show_default=True),
+        click.option("--watermark/--no-watermark", default=None),
         click.option("--consent-ack", is_flag=True, hidden=True),
-        click.option("--preview/--no-preview", default=True),
+        click.option("--preview/--no-preview", default=None, help="OpenCV/file preview frames (default: on)."),
+        click.option("--widget/--no-widget", default=None, help="Desktop Quickshell widget (default: auto/on)."),
         click.option("-o", "--output", "output_video", type=click.Path(path_type=Path), default=None),
         click.option("--ffmpeg-out", multiple=True, help="Extra ffmpeg argv after raw input (repeatable)"),
         click.option("--gstreamer", default=None, help="GStreamer pipeline after videoconvert (optional)"),
         click.option("--max-frames", type=int, default=None),
-        click.option("--show-metrics/--hide-metrics", default=True),
+        click.option("--show-metrics/--hide-metrics", default=None),
         click.option(
             "--frame-gen",
             "frame_gen",
             default=None,
             is_flag=False,
-            flag_value="on",
-            metavar="[2x|3x|4x|auto]",
-            help="AI frame generation (RIFE interpolation between swapped frames). "
-            "Bare flag = 2x; 'auto' benchmarks first and picks a mode. Off by default.",
+            flag_value="auto",
+            metavar="[auto|2x|3x|4x|off]",
+            help="AI frame generation. Default: auto (on). Use --frame-gen off or --no-frame-gen to disable.",
         ),
         click.option("--no-frame-gen", "no_frame_gen", is_flag=True, help="Force frame generation off."),
         click.option(
             "--output-fps",
             type=float,
             default=None,
-            help="Target presented fps (implies --frame-gen). E.g. 60 or 120.",
+            help="Target presented fps (implies frame-gen). E.g. 60 or 120.",
         ),
         click.option(
             "--frame-gen-backend",
@@ -93,14 +96,13 @@ def _common_io_options(fn):
             "--frame-gen-model",
             type=click.Choice(sorted(RIFE_VARIANTS)),
             default=None,
-            help="RIFE variant (default from --preset: latency=4.25.lite, balanced=4.25, quality=4.26).",
+            help="RIFE variant (default from --preset).",
         ),
         click.option(
             "--swap-precision",
             type=click.Choice(["auto", "fp32", "bf16"]),
             default="auto",
             show_default=True,
-            help="AlphaFace compute precision (auto: bf16 for latency/balanced, fp32 for quality).",
         ),
     ]
     for opt in reversed(opts):
@@ -128,7 +130,7 @@ def _save_settings(data: dict) -> None:
 
 
 def _resolve_source(source_path: Path | None, identity: str | None) -> Path:
-    """--source / --identity, else the last face used, else ask (terminal only)."""
+    """--source / -f / --identity, else the last face used, else ask (terminal only)."""
     settings = _load_settings()
     try:
         p = resolve_source_image(str(source_path) if source_path else None, identity)
@@ -136,12 +138,12 @@ def _resolve_source(source_path: Path | None, identity: str | None) -> Path:
         raise click.ClickException(str(e)) from e
     if p is None and settings.get("source") and Path(settings["source"]).is_file():
         p = Path(settings["source"])
-        click.echo(f"deepfake: using last face {p} (change with --source)", err=True)
+        click.echo(f"deepfake: using last face {p} (change with -f)", err=True)
     if p is None:
         ids = list_fakeperson_identities()
         if not sys.stdin.isatty():
             raise click.ClickException(
-                "No face image yet: pass --source face.jpg once (it is remembered)"
+                "No face image yet: pass -f face.jpg once (it is remembered)"
                 + (f" or --identity one of: {', '.join(ids)}" if ids else "")
             )
         hint = f" or a fakeperson identity ({', '.join(ids)})" if ids else ""
@@ -159,7 +161,27 @@ def _resolve_source(source_path: Path | None, identity: str | None) -> Path:
     return p
 
 
+def _apply_config_defaults(kwargs: dict) -> dict:
+    cfg = ensure_default_config()
+    if kwargs.get("preset") is None:
+        kwargs["preset"] = cfg.preset or "balanced"
+    if kwargs.get("device") is None:
+        kwargs["device"] = cfg.gpu or "auto"
+    if kwargs.get("watermark") is None:
+        kwargs["watermark"] = cfg.watermark
+    if kwargs.get("preview") is None:
+        kwargs["preview"] = cfg.preview
+    if kwargs.get("show_metrics") is None:
+        kwargs["show_metrics"] = cfg.show_metrics
+    if kwargs.get("frame_gen") is None and not kwargs.get("no_frame_gen"):
+        kwargs["frame_gen"] = cfg.frame_generation or "auto"
+    return kwargs
+
+
 def _swap_precision(kwargs: dict) -> str:
+    from .framegen.settings import PRESET_FRAME_GEN
+    from .presets import framegen_preset_name
+
     choice = kwargs.get("swap_precision") or "auto"
     if choice != "auto":
         return choice
@@ -167,68 +189,24 @@ def _swap_precision(kwargs: dict) -> str:
 
 
 def _fg_from_kwargs(kwargs: dict, source_fps: float) -> FrameGenSettings:
-    """Resolve --frame-gen / --output-fps / --no-frame-gen into settings."""
-    if kwargs.get("no_frame_gen"):
-        return FrameGenSettings(enabled=False)
     try:
-        enabled, factor = parse_frame_gen(kwargs.get("frame_gen"))
+        return resolve_frame_gen(
+            cli_value=kwargs.get("frame_gen"),
+            no_frame_gen=bool(kwargs.get("no_frame_gen")),
+            output_fps=kwargs.get("output_fps"),
+            source_fps=source_fps,
+            preset=kwargs["preset"],
+            backend=kwargs.get("frame_gen_backend") or "rife",
+            variant=kwargs.get("frame_gen_model"),
+            progress=lambda m: click.echo(m, err=True),
+        )
     except ValueError as e:
-        raise click.BadParameter(str(e), param_hint="--frame-gen") from e
-    out_fps = kwargs.get("output_fps")
-    if out_fps is not None:
-        if out_fps <= source_fps:
-            raise click.BadParameter(
-                f"--output-fps {out_fps:g} must exceed the source rate ({source_fps:g} fps)",
-                param_hint="--output-fps",
-            )
-        enabled = True
-        factor = factor or factor_for(out_fps, source_fps)
-    if not enabled:
-        return FrameGenSettings(enabled=False)
-    pre = PRESET_FRAME_GEN[framegen_preset_name(kwargs["preset"])]
-    variant = kwargs.get("frame_gen_model") or str(pre["variant"])
-    settings = FrameGenSettings(
-        enabled=True,
-        factor=factor,
-        output_fps=out_fps,
-        backend=kwargs.get("frame_gen_backend") or "rife",
-        variant=variant,
-        max_latency_ms=float(pre["max_latency_ms"]),
-        flow_scale=pre.get("flow_scale"),  # type: ignore[arg-type]
-    )
-    if factor is None:  # --frame-gen auto
-        settings = _auto_frame_gen(settings, kwargs, source_fps)
-    return settings
-
-
-def _auto_frame_gen(settings: FrameGenSettings, kwargs: dict, source_fps: float) -> FrameGenSettings:
-    """Measure this machine briefly and pick a multiplier (or off)."""
-    from dataclasses import replace
-
-    from .benchmark import BenchConfig, run_benchmark
-
-    cfg = _cfg_from_kwargs(kwargs)
-    res = f"{cfg.preset.height}p"
-    known = {"720p", "1080p"}
-    bc = BenchConfig(
-        resolutions=(res if res in known else "720p",),
-        camera_fps=source_fps,
-        target_fps=kwargs.get("output_fps") or 60.0,
-        seconds=5.0,
-        factors=(2, 3),
-        variant=settings.variant,
-        swap_precision=_swap_precision(kwargs),
-    )
-    click.echo("frame-gen auto: measuring this GPU (≈30 s) …", err=True)
-    report = run_benchmark(bc, progress=lambda m: click.echo(f"  {m}", err=True))
-    rec = next(iter(report["recommendation"].values()))
-    click.echo(f"frame-gen auto → {rec['mode']} ({rec['reason']})", err=True)
-    if rec["mode"] == "off":
-        return FrameGenSettings(enabled=False)
-    return replace(settings, factor=int(rec["mode"].rstrip("x")))
+        raise click.BadParameter(str(e)) from e
 
 
 def _cfg_from_kwargs(kwargs: dict):
+    from .presets import Preset
+
     preset = kwargs["preset"]
     device = resolve_cuda(kwargs.get("device") or "auto")
     backend = kwargs.get("backend")
@@ -249,31 +227,10 @@ def _cfg_from_kwargs(kwargs: dict):
         allow_passthrough=(backend == "passthrough"),
         swap_precision=_swap_precision(kwargs),
     )
-    # resolution overrides
     w, h, fps = kwargs.get("width"), kwargs.get("height"), kwargs.get("fps")
     if w or h or fps:
-        from dataclasses import replace
-
-        from .presets import Preset
-
         p = cfg.preset
-        cfg = build_config(
-            preset,
-            device=cfg.device,
-            backend=cfg.backend,
-            face_index=cfg.face_index,
-            multi_face=cfg.multi_face,
-            blend_feather=cfg.blend_feather,
-            color_match=cfg.color_match,
-            temporal_smooth=cfg.temporal_smooth,
-            watermark=cfg.watermark,
-            show_metrics=cfg.show_metrics,
-            max_frames=cfg.max_frames,
-            allow_passthrough=cfg.allow_passthrough,
-            swap_precision=cfg.swap_precision,
-        )
-        # rebuild preset with overrides via object replace on PipelineConfig.preset
-        new_p = Preset(
+        cfg.preset = Preset(
             name=p.name,
             width=w or p.width,
             height=h or p.height,
@@ -284,8 +241,6 @@ def _cfg_from_kwargs(kwargs: dict):
             color_match=p.color_match,
             multi_face=p.multi_face,
         )
-        cfg.preset = new_p
-        _ = replace  # silence lint if unused
     return cfg
 
 
@@ -301,34 +256,72 @@ def _make_sink(kwargs: dict, cfg, fps: float | None = None, size: tuple[int, int
         width=width,
         height=height,
         fps=float(fps or cfg.preset.fps),
+        audio_from=kwargs.get("audio_from"),
+        encoder=kwargs.get("encoder") or "auto",
     )
 
 
-def _run_live(kwargs: dict, source: Path, cfg) -> None:
-    """Webcam / virtualcam: threaded pipeline, optional frame generation."""
-    from .framegen import FrameGenUnavailable
+def _widget_flag(kwargs: dict) -> bool | None:
+    return kwargs.get("widget")
+
+
+def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
+    """Webcam / virtualcam: session + FrameGen auto + Quickshell."""
     from .realtime import run_realtime
 
+    session = DeepfakeSession(
+        mode,
+        source_face=source,
+        input_device=str(kwargs.get("input_device") or ""),
+        output_device=kwargs.get("output_device"),
+        resolution=(cfg.preset.width, cfg.preset.height),
+        widget=_widget_flag(kwargs),
+    )
+    session.start()
     fg = _fg_from_kwargs(kwargs, float(cfg.preset.fps))
+    # Probe FrameGen early so we can fall back without aborting the session.
+    if fg.enabled:
+        fg, _backend, warn = try_init_framegen(fg, cfg.preset.width, cfg.preset.height)
+        if _backend is not None:
+            try:
+                _backend.shutdown()
+            except Exception:
+                pass
+        session.apply_frame_gen(fg, warning=warn)
+    else:
+        session.apply_frame_gen(fg)
+
     out_fps = fg.resolve_output_fps(cfg.preset.fps) if fg.enabled else float(cfg.preset.fps)
     click.echo(
-        f"deepfake: {cfg.preset.width}x{cfg.preset.height} camera {cfg.preset.fps} fps · "
+        f"deepfake: {cfg.preset.width}x{cfg.preset.height} · camera {cfg.preset.fps} fps · "
         f"swap {cfg.swap_precision} · frame-gen {fg.describe()}"
         + (f" · output {out_fps:g} fps" if fg.enabled else ""),
         err=True,
     )
     sink = _make_sink(kwargs, cfg, fps=out_fps)
     cap = _parse_input_device(kwargs.get("input_device"), 0)
+    session.mark_running()
+
+    def on_stats(snap):
+        session.publish_stats(snap)
+        if session.stop_requested():
+            raise KeyboardInterrupt
+
     try:
         final = run_realtime(
-            cap, source, sink, cfg, fg, source_fps=float(cfg.preset.fps),
+            cap,
+            source,
+            sink,
+            cfg,
+            fg,
+            source_fps=float(cfg.preset.fps),
             print_stats=bool(kwargs.get("show_metrics", True)),
+            on_stats=on_stats,
         )
-    except FrameGenUnavailable as e:
-        sink.close()
-        raise click.ClickException(f"{e}  (or run without --frame-gen)") from e
     except KeyboardInterrupt:
         return
+    finally:
+        session.close()
     click.echo("final: " + json.dumps(final), err=True)
 
 
@@ -340,36 +333,52 @@ def _parse_input_device(raw: str | None, default: int = 0):
     return raw
 
 
-@click.group()
+@click.group(invoke_without_command=False)
 @click.version_option(__version__, prog_name="deepfake")
 @click.pass_context
 def main(ctx: click.Context) -> None:
-    """Linux real-time face-swap CLI (AlphaFace research wrapper).
+    """deepfake — Real-time AI face swapping
 
     \b
-    Quick start:
-      deepfake webcam --source face.jpg   first time (the face is remembered)
-      deepfake webcam                     live preview
-      deepfake virtualcam                 virtual camera for OBS / browsers / calls
-      deepfake video clip.mp4             swap a file
-      deepfake devices                    cameras and virtual cameras
+    Usage:
+      deepfake <command>
 
-    For research, VFX, avatars, filmmaking and consenting demos; output is
-    watermarked "SYNTHETIC MEDIA" by default.
+    \b
+    Commands:
+      webcam       Start real-time webcam face swapping
+      virtualcam   Start a virtual face-swapped webcam
+      video        Process an existing video
+      devices      Show cameras and GPUs
+      benchmark    Benchmark the pipeline
+      models       Manage models
+      doctor       Diagnose installation
+      config       Manage preferences
+
+    \b
+    Examples:
+      deepfake webcam
+      deepfake webcam -f person.png
+      deepfake virtualcam
+      deepfake virtualcam -f person.png
+      deepfake video -i input.mp4 -f person.png -o output.mp4
+
+    Frame generation and the desktop widget start automatically.
     """
     ctx.ensure_object(dict)
     ensure_dirs()
+    ensure_default_config()
 
 
 @main.command("webcam")
 @_common_io_options
 def webcam_cmd(**kwargs):
-    """Live webcam face swap with optional --source person.jpg."""
+    """Live webcam face swap (FrameGen + Quickshell on by default)."""
+    kwargs = _apply_config_defaults(kwargs)
     require_consent(ack=kwargs.get("consent_ack", False), watermark=kwargs.get("watermark", True))
     source = _resolve_source(kwargs.get("source_path"), kwargs.get("identity"))
     cfg = _cfg_from_kwargs(kwargs)
     try:
-        _run_live(kwargs, source, cfg)
+        _run_live(kwargs, source, cfg, mode="webcam")
     except click.ClickException:
         raise
     except Exception as e:  # noqa: BLE001
@@ -377,39 +386,102 @@ def webcam_cmd(**kwargs):
 
 
 @main.command("video")
-@click.argument("input_video", type=click.Path(path_type=Path, exists=True))
+@click.argument("input_video", required=False, type=click.Path(path_type=Path, exists=True))
+@click.option("-i", "--input", "input_opt", type=click.Path(path_type=Path, exists=True), default=None)
 @_common_io_options
-def video_cmd(input_video: Path, **kwargs):
-    """Face-swap an input video file."""
+def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
+    """Face-swap a video file.
+
+    \b
+      deepfake video -i input.mp4 -f person.png -o output.mp4
+      deepfake video input.mp4 -f person.png
+    """
+    kwargs = _apply_config_defaults(kwargs)
+    path = input_opt or input_video
+    if path is None:
+        raise click.UsageError("Provide an input video: deepfake video -i input.mp4 -f face.png -o out.mp4")
     require_consent(ack=kwargs.get("consent_ack", False), watermark=kwargs.get("watermark", True))
     source = _resolve_source(kwargs.get("source_path"), kwargs.get("identity"))
     cfg = _cfg_from_kwargs(kwargs)
     if kwargs.get("output_video") is None and not kwargs.get("ffmpeg_out"):
-        # default save next to input
-        kwargs["output_video"] = input_video.with_name(input_video.stem + "_swapped.mp4")
-        kwargs["preview"] = kwargs.get("preview", False)
+        kwargs["output_video"] = path.with_name(path.stem + "-deepfake.mp4")
+        if kwargs.get("preview") is None:
+            kwargs["preview"] = False
+    # never overwrite the original
+    out = kwargs.get("output_video")
+    if out is not None and Path(out).resolve() == path.resolve():
+        raise click.ClickException("refusing to overwrite the input video; pick a different -o")
+
     import cv2
 
-    probe = cv2.VideoCapture(str(input_video))
+    probe = cv2.VideoCapture(str(path))
     src_fps = probe.get(cv2.CAP_PROP_FPS) or 30.0
+    w = int(probe.get(cv2.CAP_PROP_FRAME_WIDTH) or cfg.preset.width)
+    h = int(probe.get(cv2.CAP_PROP_FRAME_HEIGHT) or cfg.preset.height)
+    total = int(probe.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     probe.release()
+
+    kwargs["audio_from"] = path
+    kwargs["encoder"] = ensure_default_config().encoder
+    session = DeepfakeSession(
+        "video",
+        source_face=source,
+        resolution=(w, h),
+        widget=_widget_flag(kwargs),
+    )
+    session.bus.update(input_video=str(path), output_video=str(kwargs.get("output_video") or ""))
+    session.start()
     fg = _fg_from_kwargs(kwargs, src_fps)
+    if fg.enabled:
+        fg, backend, warn = try_init_framegen(fg, w, h)
+        if backend is not None:
+            try:
+                backend.shutdown()
+            except Exception:
+                pass
+        session.apply_frame_gen(fg, warning=warn)
+    else:
+        session.apply_frame_gen(fg)
+
     try:
         if not fg.enabled:
             sink = _make_sink(kwargs, cfg)
-            run_loop(str(input_video), source, sink, cfg)
+            session.mark_running()
+            run_loop(str(path), source, sink, cfg)
             return
         from .realtime import run_offline
 
+        session.mark_running()
+
+        def progress_hook(snap_or_msg=None, **kw):
+            # run_offline prints periodically; also publish rough progress via frames
+            if isinstance(snap_or_msg, dict):
+                session.publish_stats(snap_or_msg)
+
         summary = run_offline(
-            str(input_video), source, lambda w, h, fps: _make_sink(kwargs, cfg, fps=fps, size=(w, h)),
-            cfg, fg, print_stats=bool(kwargs.get("show_metrics", True)),
+            str(path),
+            source,
+            lambda ww, hh, fps: _make_sink(kwargs, cfg, fps=fps, size=(ww, hh)),
+            cfg,
+            fg,
+            print_stats=bool(kwargs.get("show_metrics", True)),
         )
+        if total > 0 and summary.get("source_frames"):
+            session.publish_video_progress(
+                pct=100.0 * summary["source_frames"] / max(1, total),
+                eta_s=0.0,
+                alphaface_fps=None,
+                output_fps=summary.get("output_fps"),
+                framegen_multiplier=fg.factor,
+                generated_frames=summary.get("generated_frames"),
+            )
         click.echo(json.dumps(summary, indent=2))
     except click.ClickException:
         raise
     except Exception as e:  # noqa: BLE001
         raise click.ClickException(str(e)) from e
+    finally:
+        session.close()
 
 
 @main.command("virtualcam")
@@ -418,12 +490,13 @@ def video_cmd(input_video: Path, **kwargs):
     "--v4l2",
     "v4l2_path",
     default=None,
-    help="v4l2loopback device (default: auto-detect, e.g. /dev/video10 'deepfake')",
+    help="v4l2loopback device (default: auto-detect)",
 )
 def virtualcam_cmd(v4l2_path: str | None, **kwargs):
-    """Stream swapped frames to a virtual webcam (OBS, browsers, video calls)."""
+    """Stream swapped frames to a virtual webcam (OBS, browsers, calls)."""
     from .devices import LOOPBACK_HELP, find_loopback_device
 
+    kwargs = _apply_config_defaults(kwargs)
     target = kwargs.get("output_device") or v4l2_path or find_loopback_device()
     if not target or not Path(target).exists():
         raise click.ClickException(LOOPBACK_HELP)
@@ -432,11 +505,12 @@ def virtualcam_cmd(v4l2_path: str | None, **kwargs):
     require_consent(ack=kwargs.get("consent_ack", False), watermark=kwargs.get("watermark", True))
     source = _resolve_source(kwargs.get("source_path"), kwargs.get("identity"))
     kwargs["output_device"] = target
-    click.echo(f"deepfake: virtual camera → {target} (select 'deepfake' in OBS / your browser)", err=True)
-    kwargs["preview"] = kwargs.get("preview", False)
+    click.echo(f"deepfake: virtual camera → {target}", err=True)
+    if kwargs.get("preview") is None:
+        kwargs["preview"] = False
     cfg = _cfg_from_kwargs(kwargs)
     try:
-        _run_live(kwargs, source, cfg)
+        _run_live(kwargs, source, cfg, mode="virtualcam")
     except click.ClickException:
         raise
     except Exception as e:  # noqa: BLE001
@@ -477,25 +551,48 @@ def devices_cmd(as_json: bool):
         click.echo("\nfakeperson identities: " + ", ".join(ids))
 
 
+@main.command("doctor")
+def doctor_cmd():
+    """Diagnose AlphaFace, CUDA, FrameGen, Quickshell, IPC, FFmpeg, v4l2loopback."""
+    checks = run_doctor()
+    click.echo(render_doctor(checks))
+    critical = {"AlphaFace", "CUDA"}
+    if any((not c.ok) and c.name in critical for c in checks):
+        sys.exit(1)
+
+
+@main.group("config")
+def config_group():
+    """Show or reset preference defaults (~/.config/deepfake/config.toml)."""
+
+
+@config_group.command("show")
+def config_show():
+    cfg = load_config()
+    click.echo(json.dumps(cfg.to_dict(), indent=2))
+
+
+@config_group.command("reset")
+def config_reset():
+    path = save_config(DeepfakeConfig())
+    click.echo(f"wrote {path}")
+
+
 @main.command("benchmark")
-@click.option("--resolution", "resolutions", multiple=True, type=click.Choice(["720p", "1080p"]),
-              help="Repeatable; default 720p and 1080p.")
-@click.option("--camera-fps", default=30.0, show_default=True, help="Synthetic camera rate.")
-@click.option("--target-fps", default=60.0, show_default=True, help="Output rate the recommendation aims for.")
-@click.option("--seconds", default=10.0, show_default=True, help="Duration of each live-pipeline run.")
+@click.option("--resolution", "resolutions", multiple=True, type=click.Choice(["720p", "1080p"]))
+@click.option("--camera-fps", default=30.0, show_default=True)
+@click.option("--target-fps", default=60.0, show_default=True)
+@click.option("--seconds", default=10.0, show_default=True)
 @click.option("--frame-gen-model", type=click.Choice(sorted(RIFE_VARIANTS)), default="4.25", show_default=True)
 @click.option("--swap-precision", type=click.Choice(["fp32", "bf16"]), default="bf16", show_default=True)
-@click.option("--json", "as_json", is_flag=True, help="Machine-readable report.")
+@click.option("--json", "as_json", is_flag=True)
 @click.option("--consent-ack", is_flag=True, hidden=True)
 def benchmark_cmd(resolutions, camera_fps, target_fps, seconds, frame_gen_model, swap_precision, as_json, consent_ack):
-    """Measure swap-only vs swap+frame-generation on this GPU (real runs, no estimates).
-
-    Uses a bundled fictional face on a synthetic real-time camera. Reports
-    swap fps/latency, interpolation cost, presented fps, end-to-end latency
-    and peak VRAM, then recommends a --frame-gen mode.
-    """
+    """Benchmark AlphaFace only, FrameGen only, and the combined default pipeline."""
     require_consent(ack=consent_ack, watermark=True)
     from .benchmark import BenchConfig, run_benchmark
+    from .session import save_framegen_cache
+    import time
 
     bc = BenchConfig(
         resolutions=tuple(resolutions) or ("720p", "1080p"),
@@ -509,6 +606,12 @@ def benchmark_cmd(resolutions, camera_fps, target_fps, seconds, frame_gen_model,
         report = run_benchmark(bc, progress=(lambda m: click.echo(m, err=True)))
     except Exception as e:  # noqa: BLE001
         raise click.ClickException(str(e)) from e
+    # Cache recommendation for frame-gen auto
+    try:
+        rec = next(iter(report.get("recommendation", {}).values()))
+        save_framegen_cache({"mode": rec["mode"], "reason": rec.get("reason"), "ts": time.time(), "from": "benchmark"})
+    except Exception:
+        pass
     if as_json:
         click.echo(json.dumps(report, indent=2))
         return
