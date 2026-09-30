@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Security
+- The AlphaFace checkpoint is now loaded with `torch.load(..., weights_only=True)`, like the
+  other checkpoints, so a tampered `.pt` cannot execute code when unpickled. Verified against
+  the real `alphaface_demo.pt`.
+
+### Fixed
+- Ruff import ordering so CI lint passes.
+
 ## 0.3.0 — 2026-09-22
 
 - **FrameGen on by default** (`auto`) for `webcam`, `virtualcam`, and `video`.

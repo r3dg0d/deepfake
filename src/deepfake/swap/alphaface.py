@@ -111,7 +111,8 @@ class AlphaFaceSwapper:
             # progress; keep stdout clean for --json consumers.
             with contextlib.redirect_stdout(sys.stderr):
                 model = build_AlphaFace(config=cfg, fine_tune=False, adv_train=False, new_id_model=False)
-            ckpt = torch.load(cfg.model_path, map_location="cpu")
+            # weights_only: a checkpoint is data; refuse to unpickle arbitrary objects from it.
+            ckpt = torch.load(cfg.model_path, map_location="cpu", weights_only=True)
             if isinstance(ckpt, dict) and "swapper" in ckpt:
                 model.Swapper.load_state_dict(ckpt["swapper"])
             else:
