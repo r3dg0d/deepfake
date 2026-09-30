@@ -590,9 +590,10 @@ def config_reset():
 def benchmark_cmd(resolutions, camera_fps, target_fps, seconds, frame_gen_model, swap_precision, as_json, consent_ack):
     """Benchmark AlphaFace only, FrameGen only, and the combined default pipeline."""
     require_consent(ack=consent_ack, watermark=True)
+    import time
+
     from .benchmark import BenchConfig, run_benchmark
     from .session import save_framegen_cache
-    import time
 
     bc = BenchConfig(
         resolutions=tuple(resolutions) or ("720p", "1080p"),

@@ -1,5 +1,5 @@
-from deepfake.session import heuristic_factor, resolve_frame_gen
 from deepfake.framegen.settings import FrameGenSettings
+from deepfake.session import heuristic_factor, resolve_frame_gen
 
 
 def test_heuristic_factor():

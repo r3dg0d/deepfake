@@ -5,8 +5,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from .devices import list_v4l2_devices, resolve_cuda
 from .models import list_models

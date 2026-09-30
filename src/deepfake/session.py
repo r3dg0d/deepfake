@@ -6,13 +6,13 @@ the desktop widget start automatically without per-command special flags.
 
 from __future__ import annotations
 
-import math
 import os
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .config import DeepfakeConfig, ensure_default_config
 from .framegen import FrameGenUnavailable, create_backend
