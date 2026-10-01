@@ -1,14 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-10-01
 
-### Security
-- The AlphaFace checkpoint is now loaded with `torch.load(..., weights_only=True)`, like the
-  other checkpoints, so a tampered `.pt` cannot execute code when unpickled. Verified against
-  the real `alphaface_demo.pt`.
+- Automatic visible-face compositing using pinned BiSeNet and XSeg, conservative foreground margins, per-track mask flow and fail-original handling.
+- Stable YuNet/LK tracks; correct detector confidence column, offscreen paste geometry and per-track color statistics. Preserve strong profiles and full occlusions.
+- Transport target pixels and visibility through the same NVOFA warp as generated frames; fix flow direction and matched-coordinate consistency. Count held frames separately.
+- Warm up actual face inference before capture. Quality video keeps original geometry and timing, including the final frame interval and bounded audio mux.
+- Real post-encode C2PA signing and verification; private development signer, explicit certificate trust, atomic publication and tamper checks.
+- Optional pinned TrustMark Q disclosure, safe weight loading, final-encoded verification and documented codec-stress failures; visible disclosure for raw live outputs.
+- Extended doctor, categorized model metadata, measured mask/track/backend metrics, debug masks, occlusion comparison and GPU regressions.
+- Package Quickshell assets in wheels, detect widget startup failure, restore automatic virtualcam widget, correct loopback rate after FFmpeg format initialization.
+- Research matrix, architecture, provenance and benchmark documentation; Python 3.12 Nix dependencies and package tests. No unvalidated diffusion cinematic mode or SynthID claim.
 
-### Fixed
-- Ruff import ordering so CI lint passes.
+## 0.4.0 (previously local, unreleased) — 2026-09-22
+
+- **Replace RIFE** with NVIDIA Optical Flow (NVOFA) frame generation as the default backend.
+- Vendored Optical Flow SDK headers; ctypes binding to `libnvidia-opticalflow.so.1`.
+- Backend auto-select: Maxine (when installed) → NvOF → passthrough.
+- Legacy `frame_gen_backend=rife` migrates to NvOF.
+- Removed RIFE weights download / IFNet code / safetensors models from the install path.
+- `--framegen-mode latency|balanced|quality`, `--target-fps`, `--frame-gen-backend nvof|maxine|passthrough`.
 
 ## 0.3.0 — 2026-09-22
 
@@ -49,8 +60,6 @@
 - Fix face paste geometry: crop and paste share the same square box.
 - Oval soft mask + LAB color match; face-crop identity before ArcFace.
 - Quickshell matrix overlay under overlays/deepfake-preview.
-
-# Changelog
 
 ## 0.2.1 — 2026-09-22
 

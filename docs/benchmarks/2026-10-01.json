@@ -1,0 +1,481 @@
+{
+  "date": "2026-10-01",
+  "hardware": "RTX 4090",
+  "software": {
+    "torch": "2.6.0+cu124",
+    "onnxruntime-gpu": "1.22.0",
+    "c2pa-python": "0.38.0",
+    "trustmark": "0.9.2"
+  },
+  "baseline_720p": {
+    "swap_only": {
+      "swap_fps": 33.5,
+      "swap_ms_p50": 33.9,
+      "swap_ms_p95": 40.61,
+      "peak_vram_mb_torch": 1392.4
+    },
+    "framegen_only_2x": {
+      "backend": "nvof",
+      "variant": "balanced",
+      "resolution": "1280x720",
+      "factor": 2,
+      "ms_per_generated_frame": 14.304,
+      "ms_per_source_interval": 14.304,
+      "generated_fps_capacity": 69.9,
+      "peak_vram_mb": 1392.4,
+      "samples": 80
+    },
+    "framegen_only_3x": {
+      "backend": "nvof",
+      "variant": "balanced",
+      "resolution": "1280x720",
+      "factor": 3,
+      "ms_per_generated_frame": 7.6,
+      "ms_per_source_interval": 15.199,
+      "generated_fps_capacity": 131.6,
+      "peak_vram_mb": 1392.4,
+      "samples": 80
+    },
+    "pipeline_no_framegen": {
+      "input_fps": 30.0,
+      "swap_fps": 30.0,
+      "output_fps": 30.0,
+      "sink_fps": 30.0,
+      "swap_latency_ms": 25.9,
+      "framegen_ms_per_frame": null,
+      "dropped_source_frames": 0,
+      "gpu_util_pct": 58.0,
+      "vram_used_mb": 11910.0,
+      "total_latency_ms": 30.4,
+      "peak_vram_mb_torch": 1391.6
+    },
+    "pipeline_framegen_2x": {
+      "input_fps": 30.0,
+      "swap_fps": 25.7,
+      "output_fps": 48.6,
+      "sink_fps": 55.4,
+      "swap_latency_ms": 37.9,
+      "framegen_ms_per_frame": 33.5,
+      "dropped_source_frames": 12,
+      "gpu_util_pct": 64.0,
+      "vram_used_mb": 11974.0,
+      "total_latency_ms": 151.3,
+      "generated_frames": 76,
+      "keyframes": 78,
+      "held_frames": 25,
+      "late_dropped": 9,
+      "queue_depth": 0,
+      "pacer_delay_ms": 139.2,
+      "framegen_shed_level": 1,
+      "peak_vram_mb_torch": 1436.3
+    },
+    "pipeline_framegen_3x": {
+      "input_fps": 30.0,
+      "swap_fps": 25.8,
+      "output_fps": 77.0,
+      "sink_fps": 83.6,
+      "swap_latency_ms": 37.9,
+      "framegen_ms_per_frame": 17.5,
+      "dropped_source_frames": 13,
+      "gpu_util_pct": 64.0,
+      "vram_used_mb": 12080.75,
+      "total_latency_ms": 141.1,
+      "generated_frames": 179,
+      "keyframes": 78,
+      "held_frames": 11,
+      "late_dropped": 11,
+      "queue_depth": 0,
+      "pacer_delay_ms": 173.8,
+      "framegen_shed_level": 0,
+      "peak_vram_mb_torch": 1504.1
+    }
+  },
+  "final_720p": {
+    "swap_only": {
+      "swap_fps": 30.6,
+      "swap_ms_p50": 34.72,
+      "swap_ms_p95": 37.84,
+      "peak_vram_mb_torch": 1411.1
+    },
+    "framegen_only_2x": {
+      "backend": "nvof",
+      "variant": "balanced",
+      "resolution": "1280x720",
+      "factor": 2,
+      "ms_per_generated_frame": 14.285,
+      "ms_per_source_interval": 14.285,
+      "generated_fps_capacity": 70.0,
+      "peak_vram_mb": 1411.1,
+      "samples": 80
+    },
+    "framegen_only_3x": {
+      "backend": "nvof",
+      "variant": "balanced",
+      "resolution": "1280x720",
+      "factor": 3,
+      "ms_per_generated_frame": 7.684,
+      "ms_per_source_interval": 15.369,
+      "generated_fps_capacity": 130.1,
+      "peak_vram_mb": 1411.1,
+      "samples": 80
+    },
+    "pipeline_no_framegen": {
+      "input_fps": 30.0,
+      "swap_fps": 30.1,
+      "output_fps": 30.1,
+      "sink_fps": 30.1,
+      "swap_latency_ms": 34.2,
+      "framegen_ms_per_frame": null,
+      "dropped_source_frames": 0,
+      "gpu_util_pct": 63.0,
+      "vram_used_mb": 11662.6875,
+      "swap_backend": "alphaface",
+      "detect_ms": 1.9,
+      "track_ms": 1.92,
+      "occlusion_ms": 9.96,
+      "composite_ms": 3.69,
+      "occlusion_backend": "bisenet+xseg / CUDAExecutionProvider,CPUExecutionProvider",
+      "occlusion_confidence": 0.803,
+      "occlusion_status": "occlusion active",
+      "tracking_status": "locked",
+      "track_ids": [
+        1
+      ],
+      "parser_refresh_interval": 2,
+      "pose_measurement": "5-point nose/eye yaw proxy; not degrees",
+      "total_latency_ms": 35.2,
+      "peak_vram_mb_torch": 1411.6
+    },
+    "pipeline_framegen_2x": {
+      "input_fps": 30.1,
+      "swap_fps": 23.0,
+      "output_fps": 50.6,
+      "sink_fps": 56.1,
+      "swap_latency_ms": 42.6,
+      "framegen_ms_per_frame": 17.3,
+      "dropped_source_frames": 21,
+      "gpu_util_pct": 65.0,
+      "vram_used_mb": 11959.0,
+      "swap_backend": "alphaface",
+      "detect_ms": 0.0,
+      "track_ms": 2.21,
+      "occlusion_ms": 6.25,
+      "composite_ms": 3.91,
+      "occlusion_backend": "bisenet+xseg / CUDAExecutionProvider,CPUExecutionProvider",
+      "occlusion_confidence": 0.79,
+      "occlusion_status": "occlusion active",
+      "tracking_status": "locked",
+      "track_ids": [
+        1
+      ],
+      "parser_refresh_interval": 2,
+      "pose_measurement": "5-point nose/eye yaw proxy; not degrees",
+      "total_latency_ms": 129.4,
+      "generated_frames": 104,
+      "keyframes": 68,
+      "held_frames": 7,
+      "late_dropped": 7,
+      "queue_depth": 0,
+      "pacer_delay_ms": 141.0,
+      "framegen_shed_level": 0,
+      "peak_vram_mb_torch": 1660.2
+    },
+    "pipeline_framegen_3x": {
+      "input_fps": 30.0,
+      "swap_fps": 21.7,
+      "output_fps": 88.9,
+      "sink_fps": 89.9,
+      "swap_latency_ms": 43.8,
+      "framegen_ms_per_frame": 11.3,
+      "dropped_source_frames": 24,
+      "gpu_util_pct": 61.0,
+      "vram_used_mb": 11955.125,
+      "swap_backend": "alphaface",
+      "detect_ms": 2.08,
+      "track_ms": 2.06,
+      "occlusion_ms": 14.64,
+      "composite_ms": 5.19,
+      "occlusion_backend": "bisenet+xseg / CUDAExecutionProvider,CPUExecutionProvider",
+      "occlusion_confidence": 0.806,
+      "occlusion_status": "occlusion active",
+      "tracking_status": "locked",
+      "track_ids": [
+        1
+      ],
+      "parser_refresh_interval": 2,
+      "pose_measurement": "5-point nose/eye yaw proxy; not degrees",
+      "total_latency_ms": 148.2,
+      "generated_frames": 191,
+      "keyframes": 66,
+      "held_frames": 11,
+      "late_dropped": 11,
+      "queue_depth": 0,
+      "pacer_delay_ms": 164.7,
+      "framegen_shed_level": 0,
+      "peak_vram_mb_torch": 1661.8
+    }
+  },
+  "benchmark_notes": [
+    "3-second synthetic measurements, BF16, NVOF balanced; a two-core Nix build ran during final synthetic measurement",
+    "Torch allocation excludes ONNX; whole-device VRAM includes unrelated processes"
+  ],
+  "paced_replay_640x480": {
+    "method": "15-second real webcam footage replay paced at 30 FPS, null sink, after stopping initial CPU-saturating build; not a second live capture",
+    "final": {
+      "input_fps": 30.0,
+      "swap_fps": 30.3,
+      "output_fps": 60.9,
+      "sink_fps": 61.4,
+      "swap_latency_ms": 29.7,
+      "framegen_ms_per_frame": 6.4,
+      "dropped_source_frames": 0,
+      "gpu_util_pct": 72.0,
+      "vram_used_mb": 11485.9375,
+      "swap_backend": "alphaface",
+      "detect_ms": 7.45,
+      "track_ms": 0.62,
+      "occlusion_ms": 0.0,
+      "composite_ms": 0.0,
+      "occlusion_backend": "bisenet+xseg / CUDAExecutionProvider,CPUExecutionProvider",
+      "occlusion_confidence": null,
+      "occlusion_status": "no face",
+      "tracking_status": "searching",
+      "track_ids": [],
+      "parser_refresh_interval": 2,
+      "pose_measurement": "unavailable",
+      "total_latency_ms": 60.2,
+      "generated_frames": 446,
+      "keyframes": 450,
+      "held_frames": 4,
+      "late_dropped": 4,
+      "queue_depth": 0,
+      "pacer_delay_ms": 75.3,
+      "framegen_shed_level": 0
+    },
+    "latency_range_ms": [
+      60.2,
+      88.7
+    ]
+  },
+  "live_check": {
+    "duration_s": 20,
+    "coverage": [
+      "real hand",
+      "hair",
+      "head turns"
+    ],
+    "method": "private local camera footage visually inspected; first live run performance invalidated by concurrent CPU saturation",
+    "not_live_validated": [
+      "cup",
+      "microphone",
+      "phone",
+      "glasses"
+    ],
+    "quantitative_real_occlusion_accuracy": "not measured"
+  },
+  "virtualcam_readback": {
+    "reader": "FFmpeg V4L2",
+    "frames": 30,
+    "width": 640,
+    "height": 480,
+    "advertised_fps": "60/1",
+    "steady_state_processed_fps": 30,
+    "steady_state_presented_fps": 60,
+    "latency_ms": 64.4,
+    "widget": "actual QML Configuration Loaded and running instance"
+  },
+  "occlusion": {
+    "fixture": "fictional face + stylized foreground shapes; NOT real-object validation",
+    "backend": "bisenet+xseg / CUDAExecutionProvider,CPUExecutionProvider",
+    "rows": {
+      "hand": {
+        "old_foreground_leak_fraction": 1.0,
+        "boundary_f1_tolerance_2px": 0.3997,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 0.7766,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.8352,
+        "alpha_delta_mean": 0.0281,
+        "occlusion_ms_p50": 8.59,
+        "frames": 18
+      },
+      "hair": {
+        "old_foreground_leak_fraction": 1.0,
+        "boundary_f1_tolerance_2px": 0.3275,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 0.7529,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.9522,
+        "alpha_delta_mean": 0.0119,
+        "occlusion_ms_p50": 7.63,
+        "frames": 18
+      },
+      "glasses": {
+        "old_foreground_leak_fraction": 1.0,
+        "boundary_f1_tolerance_2px": 0.3166,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 0.4127,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.9058,
+        "alpha_delta_mean": 0.0141,
+        "occlusion_ms_p50": 7.6,
+        "frames": 18
+      },
+      "microphone": {
+        "old_foreground_leak_fraction": 0.9444,
+        "boundary_f1_tolerance_2px": 0.3938,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 0.6515,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.9604,
+        "alpha_delta_mean": 0.0151,
+        "occlusion_ms_p50": 7.37,
+        "frames": 18
+      },
+      "cup": {
+        "old_foreground_leak_fraction": 1.0,
+        "boundary_f1_tolerance_2px": 0.3423,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 0.7738,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.8556,
+        "alpha_delta_mean": 0.0213,
+        "occlusion_ms_p50": 7.43,
+        "frames": 18
+      },
+      "phone": {
+        "old_foreground_leak_fraction": 1.0,
+        "boundary_f1_tolerance_2px": 0.5322,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 0.839,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.8764,
+        "alpha_delta_mean": 0.0294,
+        "occlusion_ms_p50": 7.54,
+        "frames": 18
+      },
+      "full": {
+        "old_foreground_leak_fraction": 1.0,
+        "boundary_f1_tolerance_2px": 1.0,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 1.0,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.0,
+        "alpha_delta_mean": 0.0,
+        "occlusion_ms_p50": 6.64,
+        "frames": 18
+      }
+    },
+    "comparison": "generated locally; no private footage published",
+    "measured_at_unix": 1790850797.61054
+  },
+  "provenance_stress": {
+    "original": {
+      "c2pa_valid": true,
+      "c2pa_trusted": false,
+      "watermark": {
+        "implementation": "Adobe TrustMark Q",
+        "schema": "deepfake-disclosure-v1",
+        "payload": "DFv1AI",
+        "samples": 10,
+        "detected_samples": 10,
+        "present": true
+      }
+    },
+    "h264-crf28": {
+      "c2pa_valid": false,
+      "c2pa_trusted": false,
+      "watermark": {
+        "implementation": "Adobe TrustMark Q",
+        "schema": "deepfake-disclosure-v1",
+        "payload": "DFv1AI",
+        "samples": 10,
+        "detected_samples": 10,
+        "present": true
+      }
+    },
+    "av1-crf35": {
+      "c2pa_valid": false,
+      "c2pa_trusted": false,
+      "watermark": {
+        "implementation": "Adobe TrustMark Q",
+        "schema": "deepfake-disclosure-v1",
+        "payload": "DFv1AI",
+        "samples": 10,
+        "detected_samples": 10,
+        "present": true
+      }
+    },
+    "low-bitrate": {
+      "c2pa_valid": false,
+      "c2pa_trusted": false,
+      "watermark": {
+        "implementation": "Adobe TrustMark Q",
+        "schema": "deepfake-disclosure-v1",
+        "payload": "DFv1AI",
+        "samples": 10,
+        "detected_samples": 1,
+        "present": false
+      }
+    },
+    "resize": {
+      "c2pa_valid": false,
+      "c2pa_trusted": false,
+      "watermark": {
+        "implementation": "Adobe TrustMark Q",
+        "schema": "deepfake-disclosure-v1",
+        "payload": "DFv1AI",
+        "samples": 10,
+        "detected_samples": 9,
+        "present": true
+      }
+    },
+    "crop": {
+      "c2pa_valid": false,
+      "c2pa_trusted": false,
+      "watermark": {
+        "implementation": "Adobe TrustMark Q",
+        "schema": "deepfake-disclosure-v1",
+        "payload": "DFv1AI",
+        "samples": 10,
+        "detected_samples": 10,
+        "present": true
+      }
+    },
+    "fps30": {
+      "c2pa_valid": false,
+      "c2pa_trusted": false,
+      "watermark": {
+        "implementation": "Adobe TrustMark Q",
+        "schema": "deepfake-disclosure-v1",
+        "payload": "DFv1AI",
+        "samples": 10,
+        "detected_samples": 10,
+        "present": true
+      }
+    },
+    "metadata-stripped": {
+      "c2pa_valid": false,
+      "c2pa_trusted": false,
+      "watermark": {
+        "implementation": "Adobe TrustMark Q",
+        "schema": "deepfake-disclosure-v1",
+        "payload": "DFv1AI",
+        "samples": 10,
+        "detected_samples": 10,
+        "present": true
+      }
+    }
+  },
+  "known_translation_test": {
+    "horizontal_motion_px": 12,
+    "midpoint_mad_before": 20.683,
+    "midpoint_mad_after": 1.531
+  },
+  "watermark_uncompressed_fixture": {
+    "encode_ms": 7.64,
+    "psnr_db": 43.62,
+    "decoded": true,
+    "unmarked_control_decoded": false
+  }
+}

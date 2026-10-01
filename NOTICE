@@ -16,18 +16,31 @@ InsightFace fallback (optional)
   Pretrained models: NON-COMMERCIAL research unless commercially licensed.
   https://github.com/deepinsight/insightface
 
-RIFE / Practical-RIFE (frame generation)
-  Repository: https://github.com/hzwer/Practical-RIFE
-  Copyright (c) 2021 hzwer — MIT License (code and released weights)
-  Paper: Huang, Zhang, Heng, Shi, Zhou, "Real-Time Intermediate Flow Estimation for Video Frame
-         Interpolation", ECCV 2022, arXiv:2011.06294
-  IFNet refactor + weight mirror: https://github.com/HolyWu/vs-rife
-  Copyright (c) 2021 HolyWu — MIT License
-  src/deepfake/framegen/rife_arch.py is derived from these; weights are downloaded (SHA-256 pinned),
-  not vendored.
+NVIDIA Optical Flow SDK headers (frame generation)
+  Repository: https://github.com/NVIDIA/NVIDIAOpticalFlowSDK
+  License: BSD-3-Clause (see third_party/nvof/)
+  Runtime: libnvidia-opticalflow.so.1 from the NVIDIA display driver
+
 
 Benchmark face (src/deepfake/assets/bench_face.jpg)
   A synthetic, fictional person generated with a local image model for this project. Not a real
   person.
 
 Do not strip upstream copyright notices when vendoring AlphaFace code.
+
+Optional mask models (downloaded separately, never bundled)
+  BiSeNet RN18: MIT (yakhyo); CelebAMask-HQ dataset terms apply.
+  YuNet 2023mar: MIT (OpenCV Zoo).
+  XSeg: GPL-3.0 (DeepFaceLab model), per FaceFusion model-license catalog.
+  https://docs.facefusion.io/introduction/licenses
+  Independent Deepfake inference adapters; no FaceFusion wrapper Python copied.
+
+Optional TrustMark Q
+  Adobe TrustMark code AND model files: MIT.
+  https://github.com/adobe/trustmark
+  Dependency and explicit model downloads only; no remover is loaded/exposed.
+
+Optional C2PA SDK
+  Official contentauth/c2pa-python dependency; Apache-2.0/MIT upstream terms.
+  https://github.com/contentauth/c2pa-python
+  No development certificate or signing key is distributed.
