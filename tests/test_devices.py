@@ -43,5 +43,7 @@ def test_find_loopback_prefers_deepfake_label(monkeypatch):
     monkeypatch.setattr(devices, "is_loopback", lambda i: i in (9, 10))
     assert devices.find_loopback_device() == "/dev/video10"
     monkeypatch.setattr(devices, "is_loopback", lambda i: False)
-    monkeypatch.setattr(devices, "list_v4l2_devices", lambda: [devices.VideoDevice(0, "/dev/video0", "USB Camera", "capture")])
+    monkeypatch.setattr(
+        devices, "list_v4l2_devices", lambda: [devices.VideoDevice(0, "/dev/video0", "USB Camera", "capture")]
+    )
     assert devices.find_loopback_device() is None

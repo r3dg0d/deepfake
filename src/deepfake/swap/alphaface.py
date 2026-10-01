@@ -52,10 +52,7 @@ class AlphaFaceSwapper:
     def _ensure_layout(self) -> Path:
         vendor = self._vendor
         if not vendor.is_dir():
-            raise RuntimeError(
-                f"AlphaFace vendor missing at {vendor}. "
-                "Run: deepfake models install alphaface --yes"
-            )
+            raise RuntimeError(f"AlphaFace vendor missing at {vendor}. Run: deepfake models install alphaface --yes")
         demo = self._weights / "alphaface_demo.pt"
         arc = self._weights / "arcface.pt"
         if not demo.is_file() or demo.stat().st_size < 10_000_000:
@@ -172,9 +169,7 @@ class AlphaFaceSwapper:
         target = torch.from_numpy(rgb).float().permute(2, 0, 1) / 255.0
         target = target.unsqueeze(0).to(self._device)
 
-        with torch.inference_mode(), torch.autocast(
-            "cuda", dtype=torch.bfloat16, enabled=self.precision == "bf16"
-        ):
+        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16, enabled=self.precision == "bf16"):
             out = self._model.Swapper(target, self._id_code)
             if out.dim() == 4:
                 out = out[0]

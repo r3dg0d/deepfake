@@ -23,7 +23,8 @@ and demos with people who have agreed to it.
 Only use faces and footage you have consent for (or own the rights to), and
 disclose synthetic media where law or platform rules require it. Impersonation,
 fraud, harassment and non-consensual deepfakes are prohibited. A
-"SYNTHETIC MEDIA" watermark is on by default (--no-watermark turns it off).
+Live output carries visible disclosure. File exports prefer verified C2PA
+Content Credentials, with optional TrustMark disclosure watermark.
 """
 
 ACK_ENV = "DEEPFAKE_CONSENT_ACK"
@@ -48,8 +49,7 @@ def record_acknowledgement() -> None:
     path = _ack_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps({"version": NOTICE_VERSION, "accepted": datetime.now(UTC).isoformat(timespec="seconds")})
-        + "\n",
+        json.dumps({"version": NOTICE_VERSION, "accepted": datetime.now(UTC).isoformat(timespec="seconds")}) + "\n",
         encoding="utf-8",
     )
 
@@ -73,5 +73,4 @@ def require_consent(*, ack: bool = False, watermark: bool = True) -> None:
         if answer not in ("y", "yes"):
             raise SystemExit(2)
         record_acknowledgement()
-    if not watermark:
-        print("warning: synthetic-media watermark disabled; disclose by other means", file=sys.stderr)
+    _ = watermark  # disclosure policy is enforced per sink, after provenance preflight

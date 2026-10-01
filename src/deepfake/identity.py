@@ -35,9 +35,7 @@ def resolve_source_image(source: str | None, identity: str | None) -> Path | Non
     if identity:
         root = fakeperson_identities_root() / identity
         if not root.is_dir():
-            raise FileNotFoundError(
-                f"fakeperson identity '{identity}' not found under {fakeperson_identities_root()}"
-            )
+            raise FileNotFoundError(f"fakeperson identity '{identity}' not found under {fakeperson_identities_root()}")
         # Prefer common render names, else any png/jpg
         for cand in ("source.png", "face.png", "identity.png", "render.png"):
             if (root / cand).is_file():
@@ -51,7 +49,5 @@ def resolve_source_image(source: str | None, identity: str | None) -> Path | Non
         for key in ("source", "face", "image", "last_render"):
             if key in meta and Path(meta[key]).is_file():
                 return Path(meta[key])
-        raise FileNotFoundError(
-            f"identity '{identity}' has no image files; render one with fakeperson first"
-        )
+        raise FileNotFoundError(f"identity '{identity}' has no image files; render one with fakeperson first")
     return None

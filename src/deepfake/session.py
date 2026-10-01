@@ -17,7 +17,7 @@ from typing import Any
 from .config import DeepfakeConfig, ensure_default_config
 from .framegen import FrameGenUnavailable, create_backend
 from .framegen.settings import PRESET_FRAME_GEN, FrameGenSettings, factor_for, parse_frame_gen
-from .ipc import SessionBus
+from .ipc import SessionBus, deactivate_preview
 from .paths import config_home
 from .presets import framegen_preset_name
 from .widget import WidgetHandle, cleanup_orphans, quickshell_available
@@ -79,14 +79,19 @@ def resolve_frame_gen(
         return FrameGenSettings(enabled=False)
 
     pre = PRESET_FRAME_GEN[framegen_preset_name(preset)]
+    mode_name = (variant or str(pre.get("variant") or pre.get("mode") or "balanced")).lower()
+    if mode_name not in PRESET_FRAME_GEN:
+        mode_name = "balanced"
+    mode_pre = PRESET_FRAME_GEN[mode_name]
     settings = FrameGenSettings(
         enabled=True,
         factor=factor,
         output_fps=output_fps,
-        backend=backend or "rife",
-        variant=variant or str(pre["variant"]),
-        max_latency_ms=float(pre["max_latency_ms"]),
-        flow_scale=pre.get("flow_scale"),  # type: ignore[arg-type]
+        backend=backend or "auto",
+        variant=mode_name,
+        max_latency_ms=float(mode_pre["max_latency_ms"]),
+        flow_scale=mode_pre.get("flow_scale") if mode_pre.get("flow_scale") is not None else pre.get("flow_scale"),  # type: ignore[arg-type]
+        mode=mode_name,
     )
     if factor is None:  # auto
         settings = _resolve_auto(settings, source_fps=source_fps, force_bench=force_bench, progress=progress)
@@ -125,7 +130,14 @@ def try_init_framegen(fg: FrameGenSettings, width: int, height: int) -> tuple[Fr
     try:
         backend = create_backend(fg.backend, variant=fg.variant, precision=fg.precision, flow_scale=fg.flow_scale)
         backend.initialize(width, height)
-        return fg, backend, None
+        if backend.name == "passthrough":
+            backend.shutdown()
+            return (
+                FrameGenSettings(enabled=False),
+                None,
+                "No interpolation backend available; preserving native frame rate",
+            )
+        return replace(fg, backend=backend.name), backend, None
     except FrameGenUnavailable as e:
         return FrameGenSettings(enabled=False), None, str(e)
     except Exception as e:  # noqa: BLE001
@@ -190,18 +202,24 @@ class DeepfakeSession:
             framegen_enabled=False,
             uptime_s=0.0,
         )
+        if self.mode == "virtualcam":
+            deactivate_preview()
         if self.should_start_widget():
             ok, detail = quickshell_available()
             if ok:
                 if self.widget.start():
                     self.bus.update(widget="running", widget_message=self.widget.message)
                 else:
-                    print(f"⚠ Quickshell unavailable\n{self.widget.message}\nContinuing without desktop widget.", flush=True)
+                    print(
+                        f"⚠ Quickshell unavailable\n{self.widget.message}\nContinuing without desktop widget.",
+                        flush=True,
+                    )
                     self.bus.update(widget="failed", widget_message=self.widget.message)
             else:
                 print(f"⚠ Quickshell unavailable\n{detail}\nContinuing without desktop widget.", flush=True)
                 self.bus.update(widget="unavailable", widget_message=detail)
         else:
+            cleanup_orphans(current_session=self.session_id)
             self.bus.update(widget="disabled")
 
     def apply_frame_gen(self, fg: FrameGenSettings, *, warning: str | None = None) -> None:
@@ -247,6 +265,20 @@ class DeepfakeSession:
             "uptime_s": round(time.monotonic() - self._t0, 1),
             "frames": (snap.get("keyframes") or 0) + (gen or 0) if gen is not None else snap.get("frames"),
         }
+        for key in (
+            "detect_ms",
+            "track_ms",
+            "occlusion_ms",
+            "composite_ms",
+            "occlusion_backend",
+            "occlusion_confidence",
+            "occlusion_status",
+            "tracking_status",
+            "track_ids",
+            "parser_refresh_interval",
+        ):
+            if key in snap:
+                payload[key] = snap[key]
         # resolution from snapshot if present
         if snap.get("width"):
             payload["width"] = snap["width"]
@@ -280,6 +312,7 @@ class DeepfakeSession:
 
     def close(self) -> None:
         try:
+            deactivate_preview()
             self.widget.stop()
         finally:
             self.bus.close(state="stopped")

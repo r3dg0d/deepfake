@@ -15,9 +15,11 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,vision,provenance]"
       - name: Lint
         run: ruff check src tests
+      - name: Format
+        run: ruff format --check src tests
       - name: Tests (CPU; GPU tests are opt-in with -m gpu)
         run: pytest -q
       - name: Help smoke
@@ -26,4 +28,5 @@ jobs:
           deepfake webcam --help
           deepfake devices
           deepfake models list
+          deepfake provenance --help
           deepfake webcam --help | grep -- --frame-gen

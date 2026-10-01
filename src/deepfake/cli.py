@@ -14,14 +14,13 @@ from .config import DeepfakeConfig, ensure_default_config, load_config, save_con
 from .consent import require_consent
 from .devices import format_devices, list_v4l2_devices, resolve_cuda
 from .doctor import render_doctor, run_doctor
-from .framegen.registry import BACKENDS as FRAMEGEN_BACKENDS
+from .framegen.registry import select_backend_name
 from .framegen.settings import FrameGenSettings
-from .framegen.variants import VARIANTS as RIFE_VARIANTS
 from .identity import list_fakeperson_identities, resolve_source_image
 from .models import install_model, list_models
 from .outputs.sinks import create_sink
 from .paths import ensure_dirs
-from .pipeline import build_config, run_loop
+from .pipeline import build_config
 from .presets import PRESET_ALIASES, PRESETS
 from .session import DeepfakeSession, resolve_frame_gen, try_init_framegen
 
@@ -61,7 +60,11 @@ def _common_io_options(fn):
         click.option("--color-match/--no-color-match", default=None),
         click.option("--temporal-smooth", type=float, default=None),
         click.option("--backend", type=click.Choice(["auto", "alphaface", "inswapper", "passthrough"]), default="auto"),
-        click.option("--watermark/--no-watermark", default=None),
+        click.option("--watermark/--no-watermark", default=None, hidden=True),
+        click.option("--visible-watermark", is_flag=True, help="Also stamp visible synthetic-media disclosure."),
+        click.option("--provenance", type=click.Choice(["auto", "c2pa", "c2pa+watermark"]), default="auto"),
+        click.option("--debug-overlay", is_flag=True, help="Show measured tracks, landmarks and mask confidence."),
+        click.option("--show-mask", type=click.Choice(["face", "occlusion", "visible"]), default=None),
         click.option("--consent-ack", is_flag=True, hidden=True),
         click.option("--preview/--no-preview", default=None, help="OpenCV/file preview frames (default: on)."),
         click.option("--widget/--no-widget", default=None, help="Desktop Quickshell widget (default: auto/on)."),
@@ -88,15 +91,27 @@ def _common_io_options(fn):
         ),
         click.option(
             "--frame-gen-backend",
-            type=click.Choice(sorted(FRAMEGEN_BACKENDS)),
-            default="rife",
+            type=click.Choice(["auto", "maxine", "nvof", "nvfruc", "passthrough"]),
+            default="auto",
             show_default=True,
         ),
         click.option(
             "--frame-gen-model",
-            type=click.Choice(sorted(RIFE_VARIANTS)),
+            type=click.Choice(["latency", "balanced", "quality", "fast", "medium", "slow"]),
             default=None,
-            help="RIFE variant (default from --preset).",
+            help="NvOF quality preset (default from --preset).",
+        ),
+        click.option(
+            "--framegen-mode",
+            type=click.Choice(["latency", "balanced", "quality"]),
+            default=None,
+            help="Framegen latency/quality mode (default: balanced).",
+        ),
+        click.option(
+            "--target-fps",
+            type=float,
+            default=None,
+            help="Alias for --output-fps.",
         ),
         click.option(
             "--swap-precision",
@@ -129,7 +144,7 @@ def _save_settings(data: dict) -> None:
     p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def _resolve_source(source_path: Path | None, identity: str | None) -> Path:
+def _resolve_source(source_path: Path | None, identity: str | None, *, quiet: bool = False) -> Path:
     """--source / -f / --identity, else the last face used, else ask (terminal only)."""
     settings = _load_settings()
     try:
@@ -138,7 +153,8 @@ def _resolve_source(source_path: Path | None, identity: str | None) -> Path:
         raise click.ClickException(str(e)) from e
     if p is None and settings.get("source") and Path(settings["source"]).is_file():
         p = Path(settings["source"])
-        click.echo(f"deepfake: using last face {p} (change with -f)", err=True)
+        if not quiet:
+            click.echo(f"deepfake: using last face {p} (change with -f)", err=True)
     if p is None:
         ids = list_fakeperson_identities()
         if not sys.stdin.isatty():
@@ -149,8 +165,10 @@ def _resolve_source(source_path: Path | None, identity: str | None) -> Path:
         hint = f" or a fakeperson identity ({', '.join(ids)})" if ids else ""
         answer = click.prompt(f"Face image to swap in{hint}", type=str).strip()
         try:
-            p = resolve_source_image(None, answer) if answer in ids else resolve_source_image(
-                os.path.expanduser(answer), None
+            p = (
+                resolve_source_image(None, answer)
+                if answer in ids
+                else resolve_source_image(os.path.expanduser(answer), None)
             )
         except FileNotFoundError as e:
             raise click.ClickException(str(e)) from e
@@ -193,11 +211,11 @@ def _fg_from_kwargs(kwargs: dict, source_fps: float) -> FrameGenSettings:
         return resolve_frame_gen(
             cli_value=kwargs.get("frame_gen"),
             no_frame_gen=bool(kwargs.get("no_frame_gen")),
-            output_fps=kwargs.get("output_fps"),
+            output_fps=kwargs.get("output_fps") or kwargs.get("target_fps"),
             source_fps=source_fps,
             preset=kwargs["preset"],
-            backend=kwargs.get("frame_gen_backend") or "rife",
-            variant=kwargs.get("frame_gen_model"),
+            backend=select_backend_name(kwargs.get("frame_gen_backend") or "auto"),
+            variant=kwargs.get("frame_gen_model") or kwargs.get("framegen_mode"),
             progress=lambda m: click.echo(m, err=True),
         )
     except ValueError as e:
@@ -226,6 +244,8 @@ def _cfg_from_kwargs(kwargs: dict):
         max_frames=kwargs.get("max_frames"),
         allow_passthrough=(backend == "passthrough"),
         swap_precision=_swap_precision(kwargs),
+        debug_overlay=kwargs.get("debug_overlay", False),
+        show_mask=kwargs.get("show_mask"),
     )
     w, h, fps = kwargs.get("width"), kwargs.get("height"), kwargs.get("fps")
     if w or h or fps:
@@ -247,7 +267,7 @@ def _cfg_from_kwargs(kwargs: dict):
 def _make_sink(kwargs: dict, cfg, fps: float | None = None, size: tuple[int, int] | None = None):
     ffmpeg_args = list(kwargs.get("ffmpeg_out") or ())
     width, height = size or (cfg.preset.width, cfg.preset.height)
-    return create_sink(
+    sink = create_sink(
         preview=bool(kwargs.get("preview", True)),
         output_video=kwargs.get("output_video"),
         ffmpeg_args=ffmpeg_args or None,
@@ -259,6 +279,11 @@ def _make_sink(kwargs: dict, cfg, fps: float | None = None, size: tuple[int, int
         audio_from=kwargs.get("audio_from"),
         encoder=kwargs.get("encoder") or "auto",
     )
+    if kwargs.get("_invisible_marker") is not None:
+        from .invisible import MarkedSink
+
+        return MarkedSink(sink, kwargs["_invisible_marker"])
+    return sink
 
 
 def _widget_flag(kwargs: dict) -> bool | None:
@@ -267,6 +292,7 @@ def _widget_flag(kwargs: dict) -> bool | None:
 
 def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
     """Webcam / virtualcam: session + FrameGen auto + Quickshell."""
+    cfg.watermark = True  # live raw frames cannot carry file-level C2PA
     from .realtime import run_realtime
 
     session = DeepfakeSession(
@@ -292,21 +318,26 @@ def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
         session.apply_frame_gen(fg)
 
     out_fps = fg.resolve_output_fps(cfg.preset.fps) if fg.enabled else float(cfg.preset.fps)
-    click.echo(
-        f"deepfake: {cfg.preset.width}x{cfg.preset.height} · camera {cfg.preset.fps} fps · "
-        f"swap {cfg.swap_precision} · frame-gen {fg.describe()}"
-        + (f" · output {out_fps:g} fps" if fg.enabled else ""),
-        err=True,
-    )
+    quiet = mode == "virtualcam"
+    if not quiet:
+        click.echo(
+            f"deepfake: {cfg.preset.width}x{cfg.preset.height} · camera {cfg.preset.fps} fps · "
+            f"swap {cfg.swap_precision} · frame-gen {fg.describe()}"
+            + (f" · output {out_fps:g} fps" if fg.enabled else ""),
+            err=True,
+        )
     sink = _make_sink(kwargs, cfg, fps=out_fps)
     cap = _parse_input_device(kwargs.get("input_device"), 0)
     session.mark_running()
+    if quiet:
+        click.echo(f"Virtual camera started on {kwargs.get('output_device')}")
 
     def on_stats(snap):
         session.publish_stats(snap)
         if session.stop_requested():
             raise KeyboardInterrupt
 
+    print_stats = bool(kwargs.get("show_metrics", True))
     try:
         final = run_realtime(
             cap,
@@ -315,14 +346,15 @@ def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
             cfg,
             fg,
             source_fps=float(cfg.preset.fps),
-            print_stats=bool(kwargs.get("show_metrics", True)),
+            print_stats=print_stats,
             on_stats=on_stats,
         )
     except KeyboardInterrupt:
         return
     finally:
         session.close()
-    click.echo("final: " + json.dumps(final), err=True)
+    if not quiet:
+        click.echo("final: " + json.dumps(final), err=True)
 
 
 def _parse_input_device(raw: str | None, default: int = 0):
@@ -396,12 +428,16 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
       deepfake video -i input.mp4 -f person.png -o output.mp4
       deepfake video input.mp4 -f person.png
     """
+    if kwargs.get("preset") is None:
+        kwargs["preset"] = "quality"
     kwargs = _apply_config_defaults(kwargs)
     path = input_opt or input_video
     if path is None:
         raise click.UsageError("Provide an input video: deepfake video -i input.mp4 -f face.png -o out.mp4")
     require_consent(ack=kwargs.get("consent_ack", False), watermark=kwargs.get("watermark", True))
     source = _resolve_source(kwargs.get("source_path"), kwargs.get("identity"))
+    if kwargs.get("preset") is None:
+        kwargs["preset"] = "quality"
     cfg = _cfg_from_kwargs(kwargs)
     if kwargs.get("output_video") is None and not kwargs.get("ffmpeg_out"):
         kwargs["output_video"] = path.with_name(path.stem + "-deepfake.mp4")
@@ -412,6 +448,32 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
     if out is not None and Path(out).resolve() == path.resolve():
         raise click.ClickException("refusing to overwrite the input video; pick a different -o")
 
+    from .provenance import available, ensure_local_signer, sign_export
+
+    machine_provenance = available() and kwargs.get("output_video") is not None
+    if kwargs.get("provenance", "auto").startswith("c2pa") and not machine_provenance:
+        raise click.ClickException("C2PA export requires [provenance] dependencies and a file output")
+    if machine_provenance:
+        try:
+            ensure_local_signer()
+        except Exception as e:
+            raise click.ClickException(f"C2PA signing setup failed: {e}") from e
+    from .invisible import InvisibleMarker
+    from .invisible import ready as watermark_ready
+
+    want_invisible = machine_provenance and kwargs.get("provenance") != "c2pa" and watermark_ready()
+    if kwargs.get("provenance") == "c2pa+watermark" and not want_invisible:
+        raise click.ClickException(
+            "TrustMark unavailable; install [watermark] and deepfake models install trustmark --yes"
+        )
+    if want_invisible:
+        kwargs["_invisible_marker"] = InvisibleMarker(cfg.device)
+    cfg.watermark = bool(kwargs.get("visible_watermark")) or not machine_provenance
+    if not machine_provenance:
+        click.echo(
+            "deepfake: C2PA unavailable; keeping visible disclosure. Install [provenance] for signed export.", err=True
+        )
+
     import cv2
 
     probe = cv2.VideoCapture(str(path))
@@ -421,6 +483,19 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
     total = int(probe.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     probe.release()
 
+    encoded_temp = None
+    intended_output = kwargs.get("output_video")
+    if machine_provenance:
+        import os
+        import tempfile
+
+        fd, temporary = tempfile.mkstemp(
+            prefix=".deepfake-encoding-", suffix=Path(intended_output).suffix, dir=Path(intended_output).parent
+        )
+        os.close(fd)
+        encoded_temp = Path(temporary)
+        kwargs["output_video"] = encoded_temp
+
     kwargs["audio_from"] = path
     kwargs["encoder"] = ensure_default_config().encoder
     session = DeepfakeSession(
@@ -429,7 +504,7 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
         resolution=(w, h),
         widget=_widget_flag(kwargs),
     )
-    session.bus.update(input_video=str(path), output_video=str(kwargs.get("output_video") or ""))
+    session.bus.update(input_video=str(path), output_video=str(intended_output or ""))
     session.start()
     fg = _fg_from_kwargs(kwargs, src_fps)
     if fg.enabled:
@@ -444,11 +519,6 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
         session.apply_frame_gen(fg)
 
     try:
-        if not fg.enabled:
-            sink = _make_sink(kwargs, cfg)
-            session.mark_running()
-            run_loop(str(path), source, sink, cfg)
-            return
         from .realtime import run_offline
 
         session.mark_running()
@@ -465,6 +535,7 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
             cfg,
             fg,
             print_stats=bool(kwargs.get("show_metrics", True)),
+            on_stats=progress_hook,
         )
         if total > 0 and summary.get("source_frames"):
             session.publish_video_progress(
@@ -476,12 +547,35 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
                 generated_frames=summary.get("generated_frames"),
             )
         click.echo(json.dumps(summary, indent=2))
+        if machine_provenance:
+            try:
+                watermark_report = None
+                if kwargs.get("_invisible_marker") is not None:
+                    watermark_report = kwargs["_invisible_marker"].verify_video(Path(kwargs["output_video"]))
+                    click.echo("Invisible watermark: " + json.dumps(watermark_report))
+                    if not watermark_report["present"]:
+                        raise RuntimeError("TrustMark disclosure did not survive final encoding")
+                report = sign_export(
+                    Path(kwargs["output_video"]),
+                    original=path,
+                    backend=summary.get("swap_backend", cfg.backend or "unknown"),
+                    framegen=fg.describe() if fg.enabled else None,
+                    watermark=watermark_report,
+                )
+                os.replace(encoded_temp, intended_output)
+                click.echo(
+                    "C2PA: verified signature and video binding; certificate trust=" + str(report["trusted"]).lower()
+                )
+            except Exception as e:
+                raise click.ClickException(f"C2PA signing failed; export is NOT certified: {e}") from e
     except click.ClickException:
         raise
     except Exception as e:  # noqa: BLE001
         raise click.ClickException(str(e)) from e
     finally:
         session.close()
+        if encoded_temp is not None:
+            encoded_temp.unlink(missing_ok=True)
 
 
 @main.command("virtualcam")
@@ -496,18 +590,23 @@ def virtualcam_cmd(v4l2_path: str | None, **kwargs):
     """Stream swapped frames to a virtual webcam (OBS, browsers, calls)."""
     from .devices import LOOPBACK_HELP, find_loopback_device
 
+    # Capture before config defaults: virtualcam stays headless (no preview,
+    # no metrics spam) unless the user opts back in; the widget remains automatic.
+    preview_cli = kwargs.get("preview")
+    metrics_cli = kwargs.get("show_metrics")
+    widget_cli = kwargs.get("widget")
     kwargs = _apply_config_defaults(kwargs)
+    kwargs["preview"] = False if preview_cli is None else preview_cli
+    kwargs["show_metrics"] = False if metrics_cli is None else metrics_cli
+    kwargs["widget"] = widget_cli
     target = kwargs.get("output_device") or v4l2_path or find_loopback_device()
     if not target or not Path(target).exists():
         raise click.ClickException(LOOPBACK_HELP)
     if not os.access(target, os.W_OK):
         raise click.ClickException(f"{target} is not writable by you (need the 'video' group)")
     require_consent(ack=kwargs.get("consent_ack", False), watermark=kwargs.get("watermark", True))
-    source = _resolve_source(kwargs.get("source_path"), kwargs.get("identity"))
+    source = _resolve_source(kwargs.get("source_path"), kwargs.get("identity"), quiet=True)
     kwargs["output_device"] = target
-    click.echo(f"deepfake: virtual camera → {target}", err=True)
-    if kwargs.get("preview") is None:
-        kwargs["preview"] = False
     cfg = _cfg_from_kwargs(kwargs)
     try:
         _run_live(kwargs, source, cfg, mode="virtualcam")
@@ -530,6 +629,39 @@ def help_cmd(ctx: click.Context, command: str | None):
         click.echo(cmd.get_help(click.Context(cmd, info_name=command, parent=parent)))
     else:
         click.echo(main.get_help(parent))
+
+
+@main.group("provenance")
+def provenance_cmd():
+    """Verify signed AI modification disclosure in exported media."""
+
+
+@provenance_cmd.command("inspect")
+@click.argument("media", type=click.Path(path_type=Path, exists=True))
+@click.option(
+    "--trust-cert",
+    type=click.Path(path_type=Path, exists=True),
+    default=None,
+    help="Explicit trust anchor; local certificates are not publicly trusted.",
+)
+def provenance_inspect(media: Path, trust_cert: Path | None):
+    from .provenance import inspect
+
+    try:
+        result = inspect(media, trust_cert=trust_cert)
+    except ImportError as e:
+        raise click.ClickException("Install the optional [provenance] dependencies") from e
+    from .invisible import InvisibleMarker
+    from .invisible import ready as watermark_ready
+
+    if watermark_ready():
+        try:
+            result["invisible_watermark"] = InvisibleMarker(resolve_cuda("auto")).verify_video(media)
+        except Exception as e:
+            result["invisible_watermark"] = {"checked": False, "reason": str(e)}
+    click.echo(json.dumps(result, indent=2))
+    if not result.get("valid"):
+        raise click.ClickException("no valid C2PA signature and asset binding found")
 
 
 @main.command("devices")
@@ -556,7 +688,7 @@ def doctor_cmd():
     """Diagnose AlphaFace, CUDA, FrameGen, Quickshell, IPC, FFmpeg, v4l2loopback."""
     checks = run_doctor()
     click.echo(render_doctor(checks))
-    critical = {"AlphaFace", "CUDA"}
+    critical = {"AlphaFace", "CUDA", "Face parser", "Occlusion engine"}
     if any((not c.ok) and c.name in critical for c in checks):
         sys.exit(1)
 
@@ -583,14 +715,46 @@ def config_reset():
 @click.option("--camera-fps", default=30.0, show_default=True)
 @click.option("--target-fps", default=60.0, show_default=True)
 @click.option("--seconds", default=10.0, show_default=True)
-@click.option("--frame-gen-model", type=click.Choice(sorted(RIFE_VARIANTS)), default="4.25", show_default=True)
+@click.option("--occlusion", is_flag=True, help="Run known-mask stylized foreground benchmark.")
+@click.option(
+    "--comparison-out",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Occlusion comparison video (original/old/new/masks).",
+)
+@click.option(
+    "--frame-gen-model",
+    type=click.Choice(["latency", "balanced", "quality", "fast", "medium", "slow"]),
+    default="balanced",
+    show_default=True,
+)
 @click.option("--swap-precision", type=click.Choice(["fp32", "bf16"]), default="bf16", show_default=True)
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--consent-ack", is_flag=True, hidden=True)
-def benchmark_cmd(resolutions, camera_fps, target_fps, seconds, frame_gen_model, swap_precision, as_json, consent_ack):
+def benchmark_cmd(
+    resolutions,
+    camera_fps,
+    target_fps,
+    seconds,
+    frame_gen_model,
+    swap_precision,
+    as_json,
+    consent_ack,
+    occlusion,
+    comparison_out,
+):
     """Benchmark AlphaFace only, FrameGen only, and the combined default pipeline."""
     require_consent(ack=consent_ack, watermark=True)
     import time
+
+    if occlusion:
+        from .occlusion.benchmark import run_occlusion_benchmark
+
+        try:
+            click.echo(json.dumps(run_occlusion_benchmark(resolve_cuda("auto"), comparison_out), indent=2))
+        except Exception as e:
+            raise click.ClickException(str(e)) from e
+        return
 
     from .benchmark import BenchConfig, run_benchmark
     from .session import save_framegen_cache
@@ -623,7 +787,7 @@ def benchmark_cmd(resolutions, camera_fps, target_fps, seconds, frame_gen_model,
 
 @main.group("models")
 def models_group():
-    """List / install face-swap backends (never silent giant downloads)."""
+    """List categorized assets and runtime backends; explicit downloads only."""
 
 
 @models_group.command("list")
@@ -640,12 +804,18 @@ def models_list(as_json: bool):
         return
     for r in rows:
         mark = "yes" if r.installed else "no"
-        click.echo(f"{r.name}\tinstalled={mark}\tsize={r.meta.get('size_hint')}")
+        click.echo(
+            f"{r.meta.get('category', 'MODEL')}: {r.name}\tinstalled={mark}\tsize={r.meta.get('size_hint')}\tversion={r.meta.get('version', 'unversioned')}\tbackend={r.meta.get('backend')}"
+        )
         click.echo(f"  source: {r.meta.get('source')}")
         click.echo(f"  code license: {r.meta.get('code_license')}")
         click.echo(f"  weights license: {r.meta.get('weights_license')}")
         if r.meta.get("notes"):
             click.echo(f"  notes: {r.meta['notes']}")
+
+    click.echo(
+        "VIDEO SEGMENTATION / RESTORATION / DEPTH: research only; no runtime backend. See docs/research-2026.md."
+    )
 
 
 @models_group.command("install")

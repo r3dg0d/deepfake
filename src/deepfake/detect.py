@@ -49,19 +49,22 @@ class OpenCVHaarDetector(FaceDetector):
 
         h, w = frame_bgr.shape[:2]
         scale = min(1.0, self.detect_width / float(w))
-        small = frame_bgr if scale >= 1.0 else cv2.resize(
-            frame_bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA
+        small = (
+            frame_bgr
+            if scale >= 1.0
+            else cv2.resize(frame_bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
         )
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         min_side = max(24, int(64 * scale))
         rects = self._cascade.detectMultiScale(
-            gray, scaleFactor=1.08, minNeighbors=4, minSize=(min_side, min_side),
+            gray,
+            scaleFactor=1.08,
+            minNeighbors=4,
+            minSize=(min_side, min_side),
             flags=getattr(cv2, "CASCADE_SCALE_IMAGE", 0),
         )
         inv = 1.0 / scale
-        boxes = [
-            FaceBox(int(x * inv), int(y * inv), int(bw * inv), int(bh * inv)) for (x, y, bw, bh) in rects
-        ]
+        boxes = [FaceBox(int(x * inv), int(y * inv), int(bw * inv), int(bh * inv)) for (x, y, bw, bh) in rects]
         boxes.sort(key=lambda b: b.w * b.h, reverse=True)
         return boxes
 
@@ -81,28 +84,38 @@ class OpenCVYuNetDetector(FaceDetector):
 
     def detect(self, frame_bgr: np.ndarray) -> list[FaceBox]:
         h, w = frame_bgr.shape[:2]
-        self._det.setInputSize((w, h))
-        _, faces = self._det.detect(frame_bgr)
+        import cv2
+
+        scale = min(1.0, 480 / w)
+        image = cv2.resize(frame_bgr, (round(w * scale), round(h * scale)))
+        self._det.setInputSize(image.shape[1::-1])
+        _, faces = self._det.detect(image)
         out: list[FaceBox] = []
         if faces is None:
             return out
         for f in faces:
-            x, y, bw, bh, score = f[:5]
-            out.append(FaceBox(int(x), int(y), int(bw), int(bh), float(score)))
+            x, y, bw, bh = f[:4] / scale
+            landmarks = f[4:14].reshape(5, 2) / scale
+            out.append(FaceBox(int(x), int(y), int(bw), int(bh), float(f[14]), landmarks))
+        out.sort(key=lambda b: b.w * b.h, reverse=True)
         return out
 
 
 def create_detector(prefer: str = "auto") -> FaceDetector:
+    if prefer in ("yunet", "auto"):
+        from .neural_assets import asset_path, verify_asset
+
+        if verify_asset("yunet"):
+            return OpenCVYuNetDetector(str(asset_path("yunet")))
+        if prefer == "yunet":
+            raise RuntimeError("YuNet missing/unverified; deepfake models install yunet --yes")
     if prefer in ("opencv", "haar", "auto"):
         try:
             return OpenCVHaarDetector()
         except Exception:
             if prefer != "auto":
                 raise
-    raise RuntimeError(
-        "No face detector available. Install opencv-python-headless "
-        "(Haar cascade is built-in)."
-    )
+    raise RuntimeError("No face detector available. Install opencv-python-headless (Haar cascade is built-in).")
 
 
 def face_square_box(box: FaceBox, frame_h: int, frame_w: int, pad: float = 0.35) -> FaceBox:
@@ -140,9 +153,7 @@ def face_square_box(box: FaceBox, frame_h: int, frame_w: int, pad: float = 0.35)
     return FaceBox(x0, y0, side_i, side_i, score=box.score, landmarks=box.landmarks)
 
 
-def align_crop(
-    frame_bgr: np.ndarray, box: FaceBox, size: int = 256, pad: float = 0.35
-) -> tuple[np.ndarray, FaceBox]:
+def align_crop(frame_bgr: np.ndarray, box: FaceBox, size: int = 256, pad: float = 0.35) -> tuple[np.ndarray, FaceBox]:
     """Square crop around face with padding; resize to size×size.
 
     Returns (crop_bgr, paste_box) where paste_box is the exact frame rectangle

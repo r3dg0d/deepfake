@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deepfake"
-version = "0.3.0"
+version = "0.5.0"
 description = "Linux real-time face-swap CLI wrapping AlphaFace research (disclosed synthetic media)"
 readme = "README.md"
 license = "MIT"
@@ -24,15 +24,21 @@ dependencies = [
   "numpy>=1.26",
   "opencv-python-headless>=4.8",
   "rich>=13.7",
+  "pillow>=10",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+dev = ["pytest>=8.0", "ruff>=0.6", "build>=1.2"]
+vision = ["onnxruntime>=1.22", "onnx>=1.17"]
+# Match CUDA 12 / cuDNN 9 used by torch 2.6; newer ORT releases require CUDA 13.
+vision-cuda12 = ["onnxruntime-gpu==1.22.0", "onnx>=1.17"]
+provenance = ["c2pa-python>=0.38,<0.39", "cryptography>=45"]
+watermark = ["trustmark==0.9.2", "torch>=2.6", "torchvision>=0.21"]
 cuda = []  # torch/cuda installed by user for AlphaFace; not forced
 insightface = ["insightface>=0.7", "onnxruntime>=1.16"]
 gdown = ["gdown>=5.0"]
-# Frame generation needs a CUDA torch build (installed by you, like AlphaFace).
-framegen = ["safetensors>=0.4", "nvidia-ml-py>=12"]
+# Frame generation uses NVIDIA Optical Flow (driver) + torch CUDA.
+framegen = ["nvidia-ml-py>=12"]
 
 [project.scripts]
 deepfake = "deepfake.cli:main"
@@ -40,8 +46,12 @@ deepfake = "deepfake.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/deepfake"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"overlays/deepfake-preview/quickshell" = "deepfake/assets/quickshell"
+"third_party/nvof/LICENSE" = "deepfake/assets/nvof-LICENSE"
+
 [tool.hatch.build.targets.sdist]
-include = ["src/deepfake", "tests", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md", "STATUS.md"]
+include = ["src/deepfake", "tests", "docs", "overlays", "third_party", "flake.nix", "flake.lock", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -28,8 +28,7 @@ def create_swapper(
     if name in ("inswapper", "insightface"):
         if not is_model_ready("inswapper"):
             return MissingModelSwapper(
-                "inswapper not installed. deepfake models install inswapper --yes "
-                "(NON-COMMERCIAL research)"
+                "inswapper not installed. deepfake models install inswapper --yes (NON-COMMERCIAL research)"
             )
         from .insightface_fallback import InswapperSwapper
 

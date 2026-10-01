@@ -25,8 +25,7 @@ class InswapperSwapper:
             from insightface.app import FaceAnalysis  # type: ignore
         except ImportError as e:
             raise RuntimeError(
-                "insightface not installed. "
-                "pip install insightface onnxruntime  # NON-COMMERCIAL research models"
+                "insightface not installed. pip install insightface onnxruntime  # NON-COMMERCIAL research models"
             ) from e
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
         if self.device == "cpu":
@@ -34,9 +33,7 @@ class InswapperSwapper:
         self._app = FaceAnalysis(name="buffalo_l", providers=providers)
         self._app.prepare(ctx_id=0 if self.device != "cpu" else -1, det_size=(640, 640))
         try:
-            self._swapper = insightface.model_zoo.get_model(
-                "inswapper_128.onnx", download=False, download_zip=False
-            )
+            self._swapper = insightface.model_zoo.get_model("inswapper_128.onnx", download=False, download_zip=False)
         except Exception:
             # Allow download only if user already ran models install --yes
             self._swapper = insightface.model_zoo.get_model("inswapper_128.onnx")

@@ -69,6 +69,7 @@ class LiveStats:
     gpu_util: float | None = None
     vram_used_mb: float | None = None
     vram_total_mb: float | None = None
+    stages: dict = field(default_factory=dict)
 
     @staticmethod
     def _p50(d: deque) -> float | None:
@@ -91,6 +92,7 @@ class LiveStats:
             "gpu_util_pct": self.gpu_util,
             "vram_used_mb": self.vram_used_mb,
         }
+        snap.update(self.stages)
         if pacer is None:
             snap["total_latency_ms"] = _r(self._p50(self.direct_latency_ms))
         else:
@@ -288,12 +290,12 @@ class FrameGenWorker(threading.Thread):
     def __init__(self, backend, timeline: OutputTimeline, pacer: FramePacer, stats: LiveStats) -> None:
         super().__init__(name="deepfake-framegen", daemon=True)
         self.backend, self.timeline, self.pacer, self.stats = backend, timeline, pacer, stats
-        self.inbox: queue.Queue[tuple[float, np.ndarray] | None] = queue.Queue(maxsize=2)
+        self.inbox: queue.Queue[tuple[float, np.ndarray, tuple | None] | None] = queue.Queue(maxsize=2)
         self._prev_t: float | None = None
         self.error: BaseException | None = None
         self.shed = ShedController()
 
-    def offer(self, item: tuple[float, np.ndarray]) -> None:
+    def offer(self, item: tuple[float, np.ndarray, tuple | None]) -> None:
         """Non-blocking hand-off; if the worker is behind, the oldest keyframe is dropped."""
         while True:
             try:
@@ -316,7 +318,9 @@ class FrameGenWorker(threading.Thread):
         except BaseException as e:  # surfaced by the main thread
             self.error = e
 
-    def process(self, t: float, frame: np.ndarray) -> None:
+    def process(self, t: float, frame: np.ndarray, context=None) -> None:
+        if hasattr(self.backend, "set_composite_context"):
+            self.backend.set_composite_context(context)
         if self._prev_t is None:
             self.backend.push(frame)
             slot = self.timeline.start(t)
@@ -371,8 +375,11 @@ def run_realtime(
     stats = LiveStats()
     backend = pacer = worker = None
     # Warm the swap path (cuDNN autotune, allocator) before the clock starts.
+    warm = source_bgr if source_bgr is not None else load_bgr(source_image)
+    warm = cv2.resize(warm, size)
     for _ in range(3):
-        pipe.swap_frame(np.full((size[1], size[0], 3), 96, dtype=np.uint8))
+        pipe.swap_frame(warm)
+    pipe.reset_tracks()
 
     if fg.enabled:
         out_fps = fg.resolve_output_fps(source_fps)
@@ -420,10 +427,11 @@ def run_realtime(
             t_cap, frame = item
             t0 = time.perf_counter()
             out, _ = pipe.swap_frame(frame)
+            stats.stages = pipe.stage_stats
             stats.swap_ms.append((time.perf_counter() - t0) * 1000)
             stats.swapped.tick()
             if worker is not None:
-                worker.offer((t_cap, out))
+                worker.offer((t_cap, out, pipe.framegen_context(frame)))
             else:
                 sink.write(apply_watermark(out, enabled=cfg.watermark))
                 stats.presented.tick()
@@ -467,6 +475,7 @@ def run_offline(
     fg: FrameGenSettings | None,
     *,
     print_stats: bool = True,
+    on_stats=None,
 ) -> dict[str, Any]:
     """Deterministic file → file processing (optionally frame-generated).
 
@@ -483,7 +492,7 @@ def run_offline(
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or cfg.preset.height
     out_fps = fg.resolve_output_fps(src_fps) if fg and fg.enabled else src_fps
     sink = sink_factory(w, h, out_fps)
-    counts = {"source_frames": 0, "keyframes": 0, "generated_frames": 0}
+    counts = {"source_frames": 0, "keyframes": 0, "generated_frames": 0, "tail_held_frames": 0}
     swap_ms: list[float] = []
     gen_ms: list[float] = []
     backend = None
@@ -507,6 +516,8 @@ def run_offline(
             out, _ = pipe.swap_frame(frame)
             swap_ms.append((time.perf_counter() - t0) * 1000)
             counts["source_frames"] += 1
+            if backend is not None and hasattr(backend, "set_composite_context"):
+                backend.set_composite_context(pipe.framegen_context(frame))
             t = k / src_fps
             k += 1
             if timeline is None:
@@ -537,13 +548,33 @@ def run_offline(
             prev_t = t
             if cfg.max_frames is not None and counts["source_frames"] >= cfg.max_frames:
                 break
+            if on_stats is not None and counts["source_frames"] % 10 == 0:
+                wall = max(0.001, time.perf_counter() - t_start)
+                on_stats(
+                    {
+                        **pipe.stage_stats,
+                        **counts,
+                        "input_fps": src_fps,
+                        "swap_fps": counts["source_frames"] / wall,
+                        "output_fps": (counts["keyframes"] + counts["generated_frames"]) / wall,
+                    }
+                )
             if print_stats and counts["source_frames"] % 30 == 0:
                 print(
                     f"{counts['source_frames']} src → {counts['keyframes'] + counts['generated_frames']} out frames",
                     flush=True,
                 )
+        if counts["source_frames"]:
+            import math
+
+            expected = math.ceil(counts["source_frames"] * out_fps / src_fps - 1e-8)
+            emitted = counts["keyframes"] + counts["generated_frames"]
+            for _ in range(max(0, expected - emitted)):
+                emit(out)
+                counts["tail_held_frames"] += 1
     finally:
         cap.release()
+        pipe.close()
         sink.close()
         if backend is not None:
             backend.shutdown()
@@ -551,6 +582,7 @@ def run_offline(
     med = lambda xs: None if not xs else round(sorted(xs)[len(xs) // 2], 2)  # noqa: E731
     return {
         **counts,
+        **pipe.stage_stats,
         "source_fps": round(src_fps, 3),
         "output_fps": round(out_fps, 3),
         "swap_ms_p50": med(swap_ms),

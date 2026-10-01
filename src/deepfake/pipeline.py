@@ -9,12 +9,14 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .composite import paste_face
+from .composite import ColorState, paste_face
 from .detect import FaceBox, FaceDetector, align_crop, create_detector
 from .metrics import MetricsTracker, format_metrics
+from .occlusion import OcclusionEngine
 from .presets import Preset, get_preset
 from .swap.base import Swapper
 from .swap.factory import create_swapper
+from .tracking import FaceTracker
 from .watermark import apply_watermark
 
 if TYPE_CHECKING:
@@ -36,8 +38,10 @@ class PipelineConfig:
     max_frames: int | None = None
     allow_passthrough: bool = False
     swap_precision: str = "fp32"
-    async_detect: bool = False  # live mode: detection on its own thread
+    async_detect: bool = False  # legacy option; tracked detection uses the current frame
     frame_gen: FrameGenSettings | None = None
+    debug_overlay: bool = False
+    show_mask: str | None = None
 
 
 class FaceSwapPipeline:
@@ -52,17 +56,29 @@ class FaceSwapPipeline:
         )
         self.metrics = MetricsTracker()
         self._async = None
-        if cfg.async_detect:
-            from .detect import AsyncDetector
+        self.tracker = FaceTracker()
+        self.occlusion = OcclusionEngine(cfg.device, parser_interval=1 if cfg.preset.name == "high-quality" else 2)
+        if self.occlusion.models is None:
+            import sys
 
-            self._async = AsyncDetector(self.detector)
-        self._prev_faces: dict[int, np.ndarray] = {}
-        self._prev_boxes: dict[int, FaceBox] = {}
-        self._alpha: dict[int, float] = {}
+            print(
+                "deepfake: preserving original faces; occlusion unavailable: " + self.occlusion.error, file=sys.stderr
+            )
+        self._mask_states = {}
+        self._colors: dict[int, ColorState] = {}
+        self.stage_stats = {}
+        self.last_masks = []
         self._frame_i = 0
 
     def set_source(self, source_bgr: np.ndarray) -> None:
         self.swapper.set_source(source_bgr)
+
+    def reset_tracks(self) -> None:
+        self.tracker = FaceTracker()
+        self._mask_states.clear()
+        self._colors.clear()
+        self.last_masks = []
+        self._frame_i = 0
 
     def close(self) -> None:
         if self._async is not None:
@@ -83,66 +99,131 @@ class FaceSwapPipeline:
         multi = self.cfg.multi_face if self.cfg.multi_face is not None else preset.multi_face
         feather = self.cfg.blend_feather if self.cfg.blend_feather is not None else preset.blend_feather
         color = self.cfg.color_match if self.cfg.color_match is not None else preset.color_match
-        smooth = (
-            self.cfg.temporal_smooth
-            if self.cfg.temporal_smooth is not None
-            else preset.temporal_smooth
-        )
+        smooth = self.cfg.temporal_smooth if self.cfg.temporal_smooth is not None else preset.temporal_smooth
 
         infer_ms = 0.0
-        if self._async is not None:
-            self._async.submit(frame_bgr)
-            boxes = self._async.latest()
-            if boxes is None:  # first frame: nothing detected yet
-                boxes = self.detector.detect(frame_bgr)
-            self._last_boxes = boxes
-        else:
-            run_detect = (self._frame_i % max(1, preset.detect_interval)) == 0
-            if run_detect or not hasattr(self, "_last_boxes"):
-                boxes = self.detector.detect(frame_bgr)
-                self._last_boxes = boxes
-            else:
-                boxes = self._last_boxes
-        fresh = self._async is not None or boxes is not getattr(self, "_boxes_prev_frame", None)
-        self._boxes_prev_frame = boxes
-
+        detect_ms = track_ms = occlusion_ms = composite_ms = 0.0
+        run_detect = (self._frame_i % max(1, preset.detect_interval)) == 0 or not self.tracker.tracks
+        td = time.perf_counter()
+        boxes = self.detector.detect(frame_bgr) if run_detect else None
+        detect_ms = (time.perf_counter() - td) * 1000
+        tt = time.perf_counter()
+        tracks = self.tracker.update(frame_bgr, boxes)
+        track_ms = (time.perf_counter() - tt) * 1000
+        alive = {t.track_id for t in tracks}
+        self._mask_states = {i: state for i, state in self._mask_states.items() if i in alive}
+        self._colors = {i: state for i, state in self._colors.items() if i in alive}
         out = frame_bgr
-        if not boxes:
-            self.metrics.mark_drop(0)
-        else:
-            selected: list[FaceBox]
-            if multi:
-                selected = boxes
-            else:
-                idx = min(self.cfg.face_index, len(boxes) - 1)
-                selected = [boxes[idx]]
-
-            for i, box in enumerate(selected):
-                crop, paste_box = align_crop(frame_bgr, box, size=256, pad=0.35)
-                result = self.swapper.swap(crop)
-                infer_ms += result.inference_ms
-                prev = self._prev_faces.get(i)
-                if fresh:
-                    alpha = motion_scaled_smoothing(smooth, self._prev_boxes.get(i), box)
-                    self._alpha[i] = alpha
-                else:  # reused box: it can't show motion, keep the last measured weight
-                    alpha = self._alpha.get(i, 0.0)
-                out = paste_face(
-                    out,
-                    result.face_bgr,
-                    paste_box,
-                    feather=feather,
-                    color_match=color,
-                    temporal_prev=prev,
-                    temporal_smooth=alpha,
-                )
-                self._prev_faces[i] = result.face_bgr
-                self._prev_boxes[i] = box
+        self.last_masks = []
+        confidences, statuses = [], []
+        selected = tracks if multi else sorted(tracks, key=lambda t: t.box.w * t.box.h, reverse=True)
+        if not multi and selected:
+            selected = [selected[min(self.cfg.face_index, len(selected) - 1)]]
+        for track in selected:
+            box, tid = track.box, track.track_id
+            crop, paste_box = align_crop(frame_bgr, box, size=256, pad=0.35)
+            pose_proxy = None
+            if box.landmarks is not None:
+                points = np.asarray(box.landmarks)
+                eye_mid = (points[0] + points[1]) / 2
+                eye_distance = float(np.linalg.norm(points[1] - points[0]))
+                pose_proxy = abs(float(points[2, 0] - eye_mid[0])) / max(1.0, eye_distance)
+            estimate = self.occlusion.estimate(crop, track, box.landmarks, temporal_state=self._mask_states.get(tid))
+            if pose_proxy is not None and pose_proxy > 0.65:
+                estimate.visible_mask[:] = 0
+                estimate.status = "preserve-original (extreme yaw proxy)"
+                estimate.temporal_state = None
+            if track.confidence < 0.35:
+                estimate.visible_mask[:] = 0
+                estimate.status = "preserve-original (uncertain track)"
+                estimate.temporal_state = None
+            self._mask_states[tid] = estimate.temporal_state
+            self.last_masks.append((paste_box, estimate, track))
+            occlusion_ms += estimate.latency_ms
+            confidences.append(estimate.confidence)
+            statuses.append(estimate.status)
+            if not np.any(estimate.visible_mask) or track.confidence < 0.35:
+                continue
+            result = self.swapper.swap(crop)
+            infer_ms += result.inference_ms
+            tc = time.perf_counter()
+            out = paste_face(
+                out,
+                result.face_bgr,
+                paste_box,
+                feather=feather,
+                color_match=color,
+                temporal_smooth=smooth,
+                visible_mask=estimate.visible_mask,
+                color_state=self._colors.setdefault(tid, ColorState()),
+            )
+            composite_ms += (time.perf_counter() - tc) * 1000
+        if self.cfg.debug_overlay or self.cfg.show_mask:
+            out = self._debug(out)
+        self.stage_stats = {
+            "swap_backend": self.swapper.name,
+            "detect_ms": round(detect_ms, 2),
+            "track_ms": round(track_ms, 2),
+            "occlusion_ms": round(occlusion_ms, 2),
+            "composite_ms": round(composite_ms, 2),
+            "occlusion_backend": self.occlusion.backend,
+            "occlusion_confidence": round(min(confidences), 3) if confidences else None,
+            "occlusion_status": "; ".join(statuses) if statuses else "no face",
+            "tracking_status": "locked" if selected else "searching",
+            "track_ids": [t.track_id for t in selected],
+            "parser_refresh_interval": self.occlusion.parser_interval,
+            "pose_measurement": "5-point nose/eye yaw proxy; not degrees"
+            if selected and selected[0].box.landmarks is not None
+            else "unavailable",
+        }
 
         total_ms = (time.perf_counter() - t0) * 1000
         m = self.metrics.record(inference_ms=infer_ms, total_ms=total_ms)
         self._frame_i += 1
         return out, m
+
+    def framegen_context(self, original: np.ndarray):
+        """Full-frame masks and target pixels for coordinated FrameGen warping."""
+        import cv2
+
+        if not self.last_masks:
+            return None
+        h, w = original.shape[:2]
+        visible, region = np.zeros((h, w), np.float32), np.zeros((h, w), np.float32)
+        for box, estimate, _track in self.last_masks:
+            x, y, bw, bh = box.x, box.y, box.w, box.h
+            visible[y : y + bh, x : x + bw] = np.maximum(
+                visible[y : y + bh, x : x + bw], cv2.resize(estimate.visible_mask, (bw, bh))
+            )
+            # The whole crop includes hair/glasses/foreground excluded by parsing.
+            region[y : y + bh, x : x + bw] = 1
+        return original, visible, region
+
+    def _debug(self, out: np.ndarray) -> np.ndarray:
+        import cv2
+
+        out = out.copy()
+        for box, estimate, track in self.last_masks:
+            x, y, w, h = box.x, box.y, box.w, box.h
+            if self.cfg.show_mask:
+                key = {"face": "face_mask", "occlusion": "occluder_mask", "visible": "visible_mask"}[self.cfg.show_mask]
+                mask = cv2.resize(getattr(estimate, key), (w, h))
+                out[y : y + h, x : x + w] = np.repeat((mask * 255).astype(np.uint8)[:, :, None], 3, 2)
+            if self.cfg.debug_overlay:
+                cv2.rectangle(out, (x, y), (x + w, y + h), (0, 220, 0), 1)
+                cv2.putText(
+                    out,
+                    f"ID {track.track_id} mask confidence {estimate.confidence:.2f}",
+                    (x, max(15, y - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.4,
+                    (0, 220, 0),
+                    1,
+                )
+                if track.box.landmarks is not None:
+                    for lx, ly in track.box.landmarks:
+                        cv2.circle(out, (int(lx), int(ly)), 2, (0, 255, 255), -1)
+        return out
 
 
 def motion_scaled_smoothing(smooth: float, prev: FaceBox | None, cur: FaceBox, full_at: float = 0.04) -> float:
@@ -213,6 +294,7 @@ def run_loop(
                 break
     finally:
         cap.release()
+        pipe.close()
         sink.close()
 
 

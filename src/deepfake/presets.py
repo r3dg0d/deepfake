@@ -59,7 +59,7 @@ PRESETS: dict[str, Preset] = {
 
 
 # Short names used by the frame-generation presets (--preset latency|balanced|quality).
-PRESET_ALIASES: dict[str, str] = {"latency": "low-latency", "quality": "high-quality"}
+PRESET_ALIASES: dict[str, str] = {"latency": "low-latency", "realtime": "low-latency", "quality": "high-quality"}
 
 
 def canonical_preset(name: str) -> str:
@@ -68,8 +68,7 @@ def canonical_preset(name: str) -> str:
 
 def framegen_preset_name(name: str) -> str:
     """Map a swap preset to its frame-generation preset (latency/balanced/quality)."""
-    inverse = {v: k for k, v in PRESET_ALIASES.items()}
-    return inverse.get(canonical_preset(name), "balanced")
+    return {"low-latency": "latency", "high-quality": "quality"}.get(canonical_preset(name), "balanced")
 
 
 def get_preset(name: str) -> Preset:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from .detect import FaceBox
@@ -27,7 +29,19 @@ def _oval_soft_mask(h: int, w: int, feather: int) -> np.ndarray:
     return mask / mmax
 
 
-def color_match_lab(src: np.ndarray, ref: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
+@dataclass
+class ColorState:
+    gain: np.ndarray | None = None
+    offset: np.ndarray | None = None
+
+
+def color_match_lab(
+    src: np.ndarray,
+    ref: np.ndarray,
+    mask: np.ndarray | None = None,
+    state: ColorState | None = None,
+    smooth: float = 0.0,
+) -> np.ndarray:
     """Match mean/std of src to ref in LAB, optionally only inside mask."""
     import cv2
 
@@ -45,14 +59,17 @@ def color_match_lab(src: np.ndarray, ref: np.ndarray, mask: np.ndarray | None = 
     else:
         sel = np.ones(src_lab.shape[:2], dtype=bool)
 
-    for c in range(3):
-        s = src_lab[:, :, c][sel]
-        r = ref_lab[:, :, c][sel]
-        if s.size == 0 or r.size == 0:
-            continue
-        s_std = float(s.std()) + 1e-6
-        r_std = float(r.std()) + 1e-6
-        out[:, :, c] = (src_lab[:, :, c] - float(s.mean())) * (r_std / s_std) + float(r.mean())
+    if int(sel.sum()) < 64:
+        return src
+    gain = np.clip(ref_lab[sel].std(0) / (src_lab[sel].std(0) + 1e-6), 0.5, 2.0)
+    offset = ref_lab[sel].mean(0) - src_lab[sel].mean(0) * gain
+    if state is not None:
+        weight = float(np.clip(smooth, 0, 0.8))
+        if state.gain is not None:
+            gain = gain * (1 - weight) + state.gain * weight
+            offset = offset * (1 - weight) + state.offset * weight
+        state.gain, state.offset = gain, offset
+    out = src_lab * gain + offset
     out = np.clip(out, 0, 255).astype(np.uint8)
     return cv2.cvtColor(out, cv2.COLOR_LAB2BGR)
 
@@ -66,6 +83,8 @@ def paste_face(
     color_match: bool = True,
     temporal_prev: np.ndarray | None = None,
     temporal_smooth: float = 0.0,
+    visible_mask: np.ndarray | None = None,
+    color_state: ColorState | None = None,
 ) -> np.ndarray:
     import cv2
 
@@ -77,12 +96,35 @@ def paste_face(
     if w <= 1 or h <= 1:
         return frame_bgr
 
-    resized = cv2.resize(face_bgr, (w, h), interpolation=cv2.INTER_LINEAR)
+    # Resize into the ORIGINAL box, then clip; never squash an offscreen face.
+    original_w, original_h = int(box.w), int(box.h)
+    ox, oy = x - int(box.x), y - int(box.y)
+    resized = cv2.resize(face_bgr, (original_w, original_h))[oy : oy + h, ox : ox + w]
     roi = frame_bgr[y:y1, x:x1]
-    mask2d = _oval_soft_mask(h, w, feather)
-
+    full_mask = (
+        _oval_soft_mask(original_h, original_w, feather)
+        if visible_mask is None
+        else cv2.resize(visible_mask.astype(np.float32), (original_w, original_h))
+    )
+    mask2d = np.clip(full_mask[oy : oy + h, ox : ox + w], 0, 1)
+    if visible_mask is not None:
+        # Bilinear upsampling can reveal an occluder boundary. Intersect nearest
+        # support to keep pixels declared hidden at exactly zero opacity.
+        support = cv2.resize(
+            (visible_mask > 0).astype(np.uint8), (original_w, original_h), interpolation=cv2.INTER_NEAREST
+        )[oy : oy + h, ox : ox + w]
+        mask2d *= support
     if color_match and roi.size and resized.shape == roi.shape:
-        resized = color_match_lab(resized, roi, mask=mask2d)
+        # Estimate gains from the canonical crop, then apply to the full ROI.
+        sample_size = (min(w, 128), min(h, 128))
+        sample_src, sample_ref = cv2.resize(resized, sample_size), cv2.resize(roi, sample_size)
+        sample_mask = cv2.resize(mask2d, sample_size, interpolation=cv2.INTER_NEAREST)
+        state = color_state if color_state is not None else ColorState()
+        color_match_lab(sample_src, sample_ref, mask=sample_mask, state=state, smooth=temporal_smooth)
+        if state.gain is not None:
+            lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB).astype(np.float32)
+            lab = np.clip(lab * state.gain + state.offset, 0, 255).astype(np.uint8)
+            resized = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
     if temporal_prev is not None and temporal_smooth > 0:
         prev = temporal_prev
@@ -93,9 +135,7 @@ def paste_face(
             resized = cv2.addWeighted(resized, 1.0 - a, prev, a, 0)
 
     mask = mask2d[:, :, None]
-    blended = (
-        resized.astype(np.float32) * mask + roi.astype(np.float32) * (1.0 - mask)
-    ).astype(np.uint8)
+    blended = (resized.astype(np.float32) * mask + roi.astype(np.float32) * (1.0 - mask)).astype(np.uint8)
     out = frame_bgr
     # Avoid full-frame copy when caller already gave us a writable buffer;
     # still copy-on-write safe if frame is shared.

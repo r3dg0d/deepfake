@@ -30,7 +30,6 @@ class PreviewSink:
     def __init__(self, title: str = "deepfake") -> None:
         import os
         import time
-        from pathlib import Path as P
 
         self.title = title
         self._use_cv = os.environ.get("DEEPFAKE_OPENCV_PREVIEW", "").strip() in ("1", "true", "yes")
@@ -39,16 +38,19 @@ class PreviewSink:
             import cv2
 
             self._cv2 = cv2
-        self._dir = P.home() / ".local/state/deepfake"
+        from ..ipc import state_dir
+
+        self._dir = state_dir()
         self._dir.mkdir(parents=True, exist_ok=True)
         self._frame_path = self._dir / "preview.png"
-        self._tmp_path = self._dir / "preview.png.tmp"
+        self._tmp_path = self._dir / "preview.tmp.png"
         self._stats_path = self._dir / "preview.json"
         self._times: list[float] = []
         self._frames = 0
         self._t0 = time.monotonic()
         self._last_write = 0.0
         self._min_interval = 1.0 / 20.0
+        self._png_writes = 0
 
     def write(self, frame_bgr: np.ndarray) -> None:
         import json
@@ -90,15 +92,19 @@ class PreviewSink:
         if not ok:
             # headless opencv builds often lack jpeg/png writers — use Pillow
             from PIL import Image
+
             rgb = cv2.cvtColor(out, cv2.COLOR_BGR2RGB)
             Image.fromarray(rgb).save(self._tmp_path, format="PNG")
             ok = True
-        if ok:
-            os.replace(self._tmp_path, self._frame_path)
+        if not ok:
+            return
+        os.replace(self._tmp_path, self._frame_path)
+        self._png_writes = getattr(self, "_png_writes", 0) + 1
         stats = {
             "active": True,
             "fps": round(fps, 1),
             "frames": self._frames,
+            "frame_seq": self._png_writes,
             "width": int(w),
             "height": int(h),
             "path": str(self._frame_path),
@@ -106,8 +112,10 @@ class PreviewSink:
             "title": self.title,
             "ts": now,
         }
+        tmp_stats = self._stats_path.with_suffix(".json.tmp")
         newline = chr(10)
-        self._stats_path.write_text(json.dumps(stats) + newline)
+        tmp_stats.write_text(json.dumps(stats) + newline)
+        os.replace(tmp_stats, self._stats_path)
 
     def close(self) -> None:
         if self._use_cv and self._cv2 is not None:
@@ -266,6 +274,7 @@ class V4L2LoopbackSink:
         # Use ffmpeg v4l2 output for reliability
         if not shutil.which("ffmpeg"):
             raise RuntimeError("ffmpeg required for v4l2loopback sink")
+        self._device, self._fps, self._frames = device, fps, 0
         self.fps_announced = announce_loopback_fps(device, fps)
         cmd = [
             "ffmpeg",
@@ -296,6 +305,12 @@ class V4L2LoopbackSink:
         if (w, h) != self._wh:
             frame_bgr = self._cv2.resize(frame_bgr, self._wh)
         self._proc.stdin.write(frame_bgr.tobytes())
+        self._frames += 1
+        if self._frames == 2:
+            # FFmpeg resets VIDIOC_S_FMT on its first output frame, which
+            # resets the loopback rate. Re-announce after it consumed two frames.
+            self._proc.stdin.flush()
+            self.fps_announced = announce_loopback_fps(self._device, self._fps)
 
     def close(self) -> None:
         if self._proc.stdin:
@@ -304,7 +319,6 @@ class V4L2LoopbackSink:
             self._proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             self._proc.kill()
-
 
 
 class FFmpegVideoSink:
@@ -327,6 +341,17 @@ class FFmpegVideoSink:
 
         if not shutil.which("ffmpeg"):
             raise RuntimeError("ffmpeg not found on PATH")
+        import os
+        import tempfile
+        import threading
+
+        self._audio_from = audio_from
+        self._fps, self._frames = fps, 0
+        self._encoded_path = path
+        if audio_from is not None:
+            fd, name = tempfile.mkstemp(prefix=".deepfake-video-", suffix=path.suffix, dir=path.parent)
+            os.close(fd)
+            self._encoded_path = Path(name)
         width, height = size
         self._wh = (width, height)
         vcodec = self._pick_encoder(encoder)
@@ -346,19 +371,27 @@ class FFmpegVideoSink:
             "-i",
             "-",
         ]
-        if audio_from is not None:
-            cmd += ["-i", str(audio_from)]
         cmd += ["-map", "0:v:0"]
-        if audio_from is not None:
-            cmd += ["-map", "1:a:0?", "-c:a", "copy", "-shortest"]
         cmd += ["-c:v", vcodec, "-pix_fmt", "yuv420p"]
         if vcodec == "libx264":
             cmd += ["-preset", "veryfast", "-crf", "18"]
         elif "nvenc" in vcodec:
             cmd += ["-preset", "p4", "-rc", "vbr", "-cq", "19"]
-        cmd.append(str(path))
+        cmd.append(str(self._encoded_path))
         self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
         self._path = path
+        self._errors = bytearray()
+
+        def collect_errors():
+            while self._proc.stderr:
+                chunk = self._proc.stderr.read(4096)
+                if not chunk:
+                    break
+                self._errors.extend(chunk)
+                del self._errors[:-8192]
+
+        self._error_reader = threading.Thread(target=collect_errors, daemon=True)
+        self._error_reader.start()
 
     @staticmethod
     def _pick_encoder(encoder: str) -> str:
@@ -388,8 +421,10 @@ class FFmpegVideoSink:
             frame_bgr = cv2.resize(frame_bgr, self._wh)
         try:
             self._proc.stdin.write(frame_bgr.tobytes())
+            self._frames += 1
         except BrokenPipeError as e:
-            err = (self._proc.stderr.read() if self._proc.stderr else b"").decode("utf-8", "replace")
+            self._error_reader.join(timeout=2)
+            err = self._errors.decode("utf-8", "replace")
             raise RuntimeError(f"ffmpeg encode failed for {self._path}: {err.strip()}") from e
 
     def close(self) -> None:
@@ -400,17 +435,47 @@ class FFmpegVideoSink:
                 pass
         try:
             self._proc.wait(timeout=60)
-        except Exception:
+            self._error_reader.join(timeout=2)
+            if self._proc.returncode != 0:
+                raise RuntimeError(
+                    f"ffmpeg exited {self._proc.returncode}: {self._errors.decode('utf-8', 'replace')[-400:]}"
+                )
+            if self._audio_from is not None:
+                # Mux after video EOF. -shortest during encoding can silently
+                # drop the last video frame; bound audio by actual written frames.
+                result = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-loglevel",
+                        "error",
+                        "-i",
+                        str(self._encoded_path),
+                        "-i",
+                        str(self._audio_from),
+                        "-map",
+                        "0:v:0",
+                        "-map",
+                        "1:a:0?",
+                        "-c",
+                        "copy",
+                        "-t",
+                        str(self._frames / self._fps),
+                        str(self._path),
+                    ],
+                    capture_output=True,
+                    timeout=120,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError("audio mux failed: " + result.stderr.decode("utf-8", "replace")[-400:])
+        except subprocess.TimeoutExpired as e:
             self._proc.kill()
-        if self._proc.returncode not in (0, None):
-            err = ""
-            try:
-                if self._proc.stderr:
-                    err = self._proc.stderr.read().decode("utf-8", "replace")
-            except Exception:
-                pass
-            if err.strip():
-                raise RuntimeError(f"ffmpeg exited {self._proc.returncode}: {err.strip()[:400]}")
+            self._proc.wait(timeout=10)
+            raise RuntimeError("ffmpeg encode/mux timed out") from e
+        finally:
+            if self._encoded_path != self._path:
+                self._encoded_path.unlink(missing_ok=True)
 
 
 class MultiSink:
@@ -444,11 +509,7 @@ def create_sink(
         sinks.append(PreviewSink())
     if output_video is not None:
         try:
-            sinks.append(
-                FFmpegVideoSink(
-                    output_video, fps, (width, height), audio_from=audio_from, encoder=encoder
-                )
-            )
+            sinks.append(FFmpegVideoSink(output_video, fps, (width, height), audio_from=audio_from, encoder=encoder))
         except Exception:
             sinks.append(VideoFileSink(output_video, fps, (width, height)))
     if ffmpeg_args:

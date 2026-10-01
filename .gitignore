@@ -23,3 +23,10 @@ STATUS.md
 *.onnx
 weights/
 vendor/
+
+.scratch/
+
+# Locally downloaded model files / signing credentials
+*.ckpt
+*.pem
+*.key
