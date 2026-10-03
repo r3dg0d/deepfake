@@ -82,7 +82,7 @@ class BenchConfig:
     target_fps: float = 60.0
     seconds: float = 8.0
     factors: tuple[int, ...] = (2, 3)
-    variant: str = "4.25"
+    variant: str = "balanced"
     swap_precision: str = "bf16"
 
 
@@ -121,7 +121,7 @@ def _swap_only(face: np.ndarray, size: tuple[int, int], precision: str, frames: 
 def _framegen_only(size: tuple[int, int], factor: int, variant: str) -> dict[str, Any]:
     from .framegen import create_backend
 
-    be = create_backend("rife", variant=variant)
+    be = create_backend("nvof", variant=variant)
     be.initialize(*size)
     try:
         return be.benchmark(size[0], size[1], factor, iterations=80).as_dict()
@@ -221,7 +221,7 @@ def run_benchmark(cfg: BenchConfig, *, progress=print) -> dict[str, Any]:
         "camera_fps": cfg.camera_fps,
         "target_fps": cfg.target_fps,
         "swap_precision": cfg.swap_precision,
-        "framegen_backend": f"rife {cfg.variant}",
+        "framegen_backend": f"nvof {cfg.variant}",
         "results": {},
     }
     for name in cfg.resolutions:
@@ -230,7 +230,7 @@ def run_benchmark(cfg: BenchConfig, *, progress=print) -> dict[str, Any]:
         progress(f"[{name}] AlphaFace swap only …")
         r["swap_only"] = _swap_only(face, size, cfg.swap_precision)
         for f in cfg.factors:
-            progress(f"[{name}] RIFE {cfg.variant} {f}x interpolation only …")
+            progress(f"[{name}] NvOF {cfg.variant} {f}x Optical Flow interpolation only …")
             r[f"framegen_only_{f}x"] = _framegen_only(size, f, cfg.variant)
         progress(f"[{name}] full pipeline, NO frame generation ({cfg.seconds:.0f}s) …")
         r["pipeline_no_framegen"] = _pipeline(face, size, cfg, None)

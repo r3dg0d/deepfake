@@ -88,9 +88,18 @@ Scope {
         onFileChanged: previewFile.reload()
         onLoaded: {
             try {
-                root.preview = JSON.parse(previewFile.text())
-                if (root.preview && root.preview.active)
-                    root.frameUrl = "file://" + root.framePath + "?t=" + (root.preview.frames || Date.now())
+                var p = JSON.parse(previewFile.text())
+                root.preview = p
+                // Only swap the thumb when PreviewSink wrote a new PNG (frame_seq / frames).
+                // SessionBus metrics ticks must not reload the Image (that caused flicker).
+                if (p && p.active && p.path && root.session.mode !== "virtualcam") {
+                    var seq = (p.frame_seq != null) ? p.frame_seq : p.frames
+                    var url = "file://" + (p.path || root.framePath) + "?t=" + seq
+                    if (url !== root.frameUrl) {
+                        root.frameUrl = url
+                        frameLoader.source = url
+                    }
+                }
             } catch (e) {
                 root.preview = ({ active: false })
             }
@@ -185,6 +194,7 @@ Scope {
                 }
 
                 Rectangle {
+                    id: previewBox
                     Layout.fillWidth: true
                     Layout.preferredHeight: 160
                     radius: 8
@@ -192,14 +202,33 @@ Scope {
                     border.color: "#1a4a1a"
                     border.width: 1
                     clip: true
-                    visible: root.session.mode !== "video" || !!(root.preview && root.preview.active)
+                    // Webcam/video only when PreviewSink is publishing frames.
+                    // Virtualcam is loopback-only — never show the live thumb.
+                    visible: root.session.mode !== "virtualcam"
+                             && !!(root.preview && root.preview.active && root.preview.path)
                     Image {
+                        id: frameShown
+                        anchors.fill: parent
+                        anchors.margins: 4
+                        fillMode: Image.PreserveAspectFit
+                        asynchronous: false
+                        cache: true
+                        // Keep last good frame; never clear on reload.
+                    }
+                    Image {
+                        id: frameLoader
                         anchors.fill: parent
                         anchors.margins: 4
                         fillMode: Image.PreserveAspectFit
                         asynchronous: true
                         cache: false
-                        source: root.frameUrl
+                        opacity: 0
+                        visible: false
+                        onStatusChanged: {
+                            if (status === Image.Ready && source.toString() !== "") {
+                                frameShown.source = source
+                            }
+                        }
                     }
                 }
 

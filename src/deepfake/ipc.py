@@ -32,6 +32,7 @@ def preview_json_path() -> Path:
     return state_dir() / "preview.json"
 
 
+
 def control_path() -> Path:
     return state_dir() / "control.json"
 
@@ -52,6 +53,20 @@ def read_json(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8") or "{}")
     except (OSError, ValueError):
         return {}
+
+
+def deactivate_preview() -> None:
+    """Mark the live thumb inactive (virtualcam / --no-preview / session end)."""
+    path = preview_json_path()
+    data: dict = {"active": False, "path": None, "frame_seq": 0}
+    try:
+        if path.is_file():
+            prev = read_json(path)
+            if isinstance(prev, dict):
+                data = {**prev, "active": False}
+    except Exception:
+        pass
+    write_json_atomic(path, data)
 
 
 class SessionBus:
@@ -80,19 +95,9 @@ class SessionBus:
             "processing",
         )
         write_json_atomic(session_path(), self._state)
-        # Keep preview.json in sync for older overlay shells.
-        preview = {
-            "active": bool(self._state.get("active")),
-            "fps": self._state.get("output_fps") or self._state.get("alphaface_fps") or 0,
-            "frames": self._state.get("frames") or 0,
-            "width": self._state.get("width") or 0,
-            "height": self._state.get("height") or 0,
-            "uptime_s": self._state.get("uptime_s") or 0,
-            "title": "deepfake",
-            "ts": self._state["ts"],
-            "session": self._state,
-        }
-        write_json_atomic(preview_json_path(), preview)
+        # Do NOT rewrite preview.json here. PreviewSink owns the live thumb +
+        # frame_seq; SessionBus metrics used to stomp it every tick and the
+        # Quickshell Image reloaded (flicker). Metrics live in session.json.
 
     def snapshot(self) -> dict[str, Any]:
         return dict(self._state)

@@ -15,7 +15,7 @@ def test_resolve_off():
         output_fps=None,
         source_fps=30,
         preset="balanced",
-        backend="rife",
+        backend="nvof",
         variant=None,
     )
     assert fg.enabled is False
@@ -28,7 +28,7 @@ def test_no_frame_gen_flag():
         output_fps=None,
         source_fps=30,
         preset="balanced",
-        backend="rife",
+        backend="nvof",
         variant=None,
     )
     assert isinstance(fg, FrameGenSettings)

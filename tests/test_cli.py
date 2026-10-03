@@ -86,7 +86,7 @@ def test_frame_gen_defaults_to_auto():
         output_fps=None,
         source_fps=30.0,
         preset="balanced",
-        backend="rife",
+        backend="nvof",
         variant=None,
     )
     assert fg.enabled is True
