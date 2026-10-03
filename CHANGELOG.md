@@ -10,6 +10,15 @@
 ### Fixed
 - Ruff import ordering so CI lint passes.
 
+## 0.4.0 — 2026-09-22
+
+- **Replace RIFE** with NVIDIA Optical Flow (NVOFA) frame generation as the default backend.
+- Vendored Optical Flow SDK headers; ctypes binding to `libnvidia-opticalflow.so.1`.
+- Backend auto-select: Maxine (when installed) → NvOF → passthrough.
+- Legacy `frame_gen_backend=rife` migrates to NvOF.
+- Removed RIFE weights download / IFNet code / safetensors models from the install path.
+- `--framegen-mode latency|balanced|quality`, `--target-fps`, `--frame-gen-backend nvof|maxine|passthrough`.
+
 ## 0.3.0 — 2026-09-22
 
 - **FrameGen on by default** (`auto`) for `webcam`, `virtualcam`, and `video`.

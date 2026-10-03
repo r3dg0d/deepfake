@@ -99,7 +99,7 @@ def render_benchmark(report: dict[str, Any]) -> None:
             )
     c.print(
         "[dim]output fps counts only new frames (real + interpolated); held = slots re-sent because a frame was late. "
-        "Latency = capture → frame handed to the sink. Interp/frame from an isolated RIFE run.[/]"
+        "Latency = capture → frame handed to the sink. Interp/frame from an isolated NvOF run.[/]"
     )
 
 

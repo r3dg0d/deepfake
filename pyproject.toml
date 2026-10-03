@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deepfake"
-version = "0.3.0"
+version = "0.4.0"
 description = "Linux real-time face-swap CLI wrapping AlphaFace research (disclosed synthetic media)"
 readme = "README.md"
 license = "MIT"
@@ -31,8 +31,8 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 cuda = []  # torch/cuda installed by user for AlphaFace; not forced
 insightface = ["insightface>=0.7", "onnxruntime>=1.16"]
 gdown = ["gdown>=5.0"]
-# Frame generation needs a CUDA torch build (installed by you, like AlphaFace).
-framegen = ["safetensors>=0.4", "nvidia-ml-py>=12"]
+# Frame generation uses NVIDIA Optical Flow (driver) + torch CUDA.
+framegen = ["nvidia-ml-py>=12"]
 
 [project.scripts]
 deepfake = "deepfake.cli:main"

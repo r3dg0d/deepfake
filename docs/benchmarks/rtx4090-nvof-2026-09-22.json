@@ -1,0 +1,11 @@
+{
+  "date": "2026-09-22",
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "framegen_backend": "nvof",
+  "notes": "Measured on zionsec after RIFE→NvOF migration. RIFE baseline from earlier same-day run.",
+  "rife_baseline_ms_per_gen": {"720p": 5.0, "1080p": 10.8, "variant": "4.25.lite"},
+  "nvof": {
+    "latency": {"720p_p50_ms": 5.71, "1080p_p50_ms": 9.95},
+    "balanced": {"720p_p50_ms": 9.34, "1080p_p50_ms": 10.39}
+  }
+}

@@ -44,11 +44,19 @@ def run_doctor() -> list[Check]:
     checks.append(Check("CUDA", cuda_ok, device if cuda_ok else "unavailable"))
     checks.append(Check("GPU", bool(gpu_name and gpu_name != "n/a"), gpu_name))
 
-    # FrameGen / RIFE
-    rife = models_dir() / "rife"
-    rife_ok = rife.is_dir() and any(rife.iterdir())
+    # FrameGen / NVIDIA Optical Flow
+    from .framegen.nvof_api import optical_flow_available
+    from .framegen.maxine import maxine_available
+    of_ok, of_detail = optical_flow_available()
+    mx_ok, mx_detail = maxine_available()
     torch_ok = importlib.util.find_spec("torch") is not None
-    checks.append(Check("FrameGen", rife_ok and torch_ok, "RIFE + torch" if rife_ok and torch_ok else "missing RIFE weights or torch"))
+    fg_ok = (of_ok or mx_ok) and torch_ok
+    fg_detail = of_detail if of_ok else (mx_detail if mx_ok else "NVIDIA Optical Flow / Maxine unavailable")
+    if fg_ok and not torch_ok:
+        fg_detail = "torch missing"
+    checks.append(Check("FrameGen", fg_ok, fg_detail if fg_ok else fg_detail))
+    checks.append(Check("Maxine VFG", mx_ok, mx_detail if mx_ok else mx_detail))
+
 
     # Quickshell
     qs_ok, qs_detail = quickshell_available()

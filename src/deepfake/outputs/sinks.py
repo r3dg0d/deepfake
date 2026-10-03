@@ -49,6 +49,7 @@ class PreviewSink:
         self._t0 = time.monotonic()
         self._last_write = 0.0
         self._min_interval = 1.0 / 20.0
+        self._png_writes = 0
 
     def write(self, frame_bgr: np.ndarray) -> None:
         import json
@@ -93,12 +94,15 @@ class PreviewSink:
             rgb = cv2.cvtColor(out, cv2.COLOR_BGR2RGB)
             Image.fromarray(rgb).save(self._tmp_path, format="PNG")
             ok = True
-        if ok:
-            os.replace(self._tmp_path, self._frame_path)
+        if not ok:
+            return
+        os.replace(self._tmp_path, self._frame_path)
+        self._png_writes = getattr(self, "_png_writes", 0) + 1
         stats = {
             "active": True,
             "fps": round(fps, 1),
             "frames": self._frames,
+            "frame_seq": self._png_writes,
             "width": int(w),
             "height": int(h),
             "path": str(self._frame_path),
@@ -106,8 +110,10 @@ class PreviewSink:
             "title": self.title,
             "ts": now,
         }
+        tmp_stats = self._stats_path.with_suffix(".json.tmp")
         newline = chr(10)
-        self._stats_path.write_text(json.dumps(stats) + newline)
+        tmp_stats.write_text(json.dumps(stats) + newline)
+        os.replace(tmp_stats, self._stats_path)
 
     def close(self) -> None:
         if self._use_cv and self._cv2 is not None:
