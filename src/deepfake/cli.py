@@ -14,7 +14,7 @@ from .config import DeepfakeConfig, ensure_default_config, load_config, save_con
 from .consent import require_consent
 from .devices import format_devices, list_v4l2_devices, resolve_cuda
 from .doctor import render_doctor, run_doctor
-from .framegen.registry import BACKENDS as FRAMEGEN_BACKENDS, select_backend_name
+from .framegen.registry import select_backend_name
 from .framegen.settings import FrameGenSettings
 from .identity import list_fakeperson_identities, resolve_source_image
 from .models import install_model, list_models

@@ -119,7 +119,7 @@ class NvidiaOpticalFlowBackend(FrameGenerationBackend):
                 perf_level=_PERF.get(self.variant, NV_OF_PERF_LEVEL_MEDIUM),
                 grid=grid,
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             # Fallback to grid 4 if finer unsupported on older GPUs.
             try:
                 self._session = NvOFSession(

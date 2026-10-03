@@ -45,8 +45,8 @@ def run_doctor() -> list[Check]:
     checks.append(Check("GPU", bool(gpu_name and gpu_name != "n/a"), gpu_name))
 
     # FrameGen / NVIDIA Optical Flow
-    from .framegen.nvof_api import optical_flow_available
     from .framegen.maxine import maxine_available
+    from .framegen.nvof_api import optical_flow_available
     of_ok, of_detail = optical_flow_available()
     mx_ok, mx_detail = maxine_available()
     torch_ok = importlib.util.find_spec("torch") is not None

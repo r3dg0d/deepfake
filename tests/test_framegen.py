@@ -2,10 +2,9 @@ import numpy as np
 import pytest
 
 from deepfake.framegen.base import timesteps_for
-from deepfake.framegen.pacing import FrameKind, FramePacer, OutputTimeline
+from deepfake.framegen.pacing import OutputTimeline
 from deepfake.framegen.registry import create_backend, select_backend_name
 from deepfake.framegen.settings import FrameGenSettings, factor_for, parse_frame_gen
-from deepfake.pipeline import motion_scaled_smoothing
 
 
 def test_timesteps_for():
@@ -92,13 +91,3 @@ def test_timeline_skips_slots_after_stall():
     pts = tl.points_between(0.5, 0.5 + 1 / 30)
     assert pts and pts[0].time > 0.5
 
-
-class FakeClock:
-    def __init__(self) -> None:
-        self.t = 0.0
-
-    def time(self) -> float:
-        return self.t
-
-    def sleep(self, dt: float) -> None:
-        self.t += dt

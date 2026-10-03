@@ -6,7 +6,7 @@ Headers vendored from https://github.com/NVIDIA/NVIDIAOpticalFlowSDK (BSD-3).
 from __future__ import annotations
 
 import ctypes
-from ctypes import CFUNCTYPE, POINTER, c_int, c_uint32, c_ulonglong, c_void_p, c_size_t
+from ctypes import CFUNCTYPE, POINTER, c_int, c_size_t, c_uint32, c_ulonglong, c_void_p
 
 NV_OF_API_VERSION = (2 << 4) | 0  # matches vendored headers; driver also accepts newer
 
