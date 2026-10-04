@@ -57,6 +57,34 @@ def color_match_lab(src: np.ndarray, ref: np.ndarray, mask: np.ndarray | None = 
     return cv2.cvtColor(out, cv2.COLOR_LAB2BGR)
 
 
+def _roi_visible_mask(
+    visible_mask: np.ndarray,
+    *,
+    frame_hw: tuple[int, int],
+    origin: tuple[int, int],
+    roi_hw: tuple[int, int],
+) -> np.ndarray:
+    """Map a visible-face mask onto the paste ROI. 1 means "ellipse may paint"."""
+    import cv2
+
+    vis = np.asarray(visible_mask)
+    if vis.ndim == 3:
+        vis = vis[:, :, 0]
+    vis = vis.astype(np.float32, copy=False)
+    if vis.size and float(np.max(vis)) > 1.5:
+        vis = vis / 255.0
+    fh, fw = frame_hw
+    y, x = origin
+    h, w = roi_hw
+    if vis.shape == (h, w):
+        roi = vis
+    elif vis.shape == (fh, fw):
+        roi = vis[y : y + h, x : x + w]
+    else:
+        roi = cv2.resize(vis, (w, h), interpolation=cv2.INTER_LINEAR)
+    return np.clip(roi, 0.0, 1.0)
+
+
 def paste_face(
     frame_bgr: np.ndarray,
     face_bgr: np.ndarray,
@@ -66,6 +94,7 @@ def paste_face(
     color_match: bool = True,
     temporal_prev: np.ndarray | None = None,
     temporal_smooth: float = 0.0,
+    visible_mask: np.ndarray | None = None,
 ) -> np.ndarray:
     import cv2
 
@@ -80,6 +109,14 @@ def paste_face(
     resized = cv2.resize(face_bgr, (w, h), interpolation=cv2.INTER_LINEAR)
     roi = frame_bgr[y:y1, x:x1]
     mask2d = _oval_soft_mask(h, w, feather)
+    if visible_mask is not None:
+        # Ellipse ∩ visible face. Omitted mask keeps today's ellipse.
+        mask2d = mask2d * _roi_visible_mask(
+            visible_mask,
+            frame_hw=(fh, fw),
+            origin=(y, x),
+            roi_hw=(h, w),
+        )
 
     if color_match and roi.size and resized.shape == roi.shape:
         resized = color_match_lab(resized, roi, mask=mask2d)

@@ -1,4 +1,4 @@
-"""Real-time frame generation (temporal interpolation) for deepfake output."""
+"""Real-time frame generation (NVIDIA Optical Flow / Maxine / passthrough)."""
 
 from .base import (
     FrameGenBenchmark,
@@ -7,7 +7,7 @@ from .base import (
     FrameGenUnavailable,
     timesteps_for,
 )
-from .registry import BACKENDS, create_backend
+from .registry import BACKENDS, create_backend, select_backend_name
 
 __all__ = [
     "BACKENDS",
@@ -16,5 +16,6 @@ __all__ = [
     "FrameGenUnavailable",
     "FrameGenerationBackend",
     "create_backend",
+    "select_backend_name",
     "timesteps_for",
 ]

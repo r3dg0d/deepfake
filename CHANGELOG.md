@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+- SAM 2.1 Hiera-Tiny runs in the existing pipx deepfake env (torch 2.6.0+cu124, not upgraded). A CPU box prompt on bench_face.jpg keeps the face center and rejects a flat cheek patch. Hands are not labeled. Pytest still does not require sam2.
+
+- SAM 2.1 Hiera-Tiny checkpoint is catalogued (official URL, 156008466 bytes, sha256). Doctor reports when the sam2 package is missing and the webcam stays on BiSeNet+XSeg. A box-prompt hole is applied only if it cannot eat the face. No hand mask was demonstrated.
+
+- Optional cached XSeg matte (`xseg_2.onnx`) subtracts BiSeNet skin it does not accept as a face, on an interval. Missing weights keep today's BiSeNet-only mask. No SAM download.
+
+- Finished video files get a C2PA manifest (face replacement, plus frame interpolation when frame generation emitted frames) via `c2patool`, then a verify step. `deepfake provenance inspect` reports only what verified. The on-screen watermark is unchanged. SynthID is not embedded.
+
+- Visible-face masks are smoothed across frames: one empty parse keeps the last mask, a new hole closes with alpha 0.9, and the hole opens back with alpha 0.35.
+- Live and offline swap now ask OcclusionEngine for a visible-face mask. BiSeNet runs through optional onnxruntime when `bisenet_resnet_18.onnx` is already cached and the graph is 19-class CelebAMask-HQ; otherwise the ellipse is unchanged and doctor/stderr say occlusion is inactive.
+- Occlusion mask math: visible face = face region minus occluder, and `paste_face` can intersect the ellipse with that mask. No parser runs yet; without executing weights the engine keeps the ellipse and reports the parser unavailable. `webcam` / `virtualcam` / `video` gain no flags.
+
 ### Security
 - The AlphaFace checkpoint is now loaded with `torch.load(..., weights_only=True)`, like the
   other checkpoints, so a tampered `.pt` cannot execute code when unpickled. Verified against
@@ -9,6 +22,15 @@
 
 ### Fixed
 - Ruff import ordering so CI lint passes.
+
+## 0.4.0 — 2026-09-22
+
+- **Replace RIFE** with NVIDIA Optical Flow (NVOFA) frame generation as the default backend.
+- Vendored Optical Flow SDK headers; ctypes binding to `libnvidia-opticalflow.so.1`.
+- Backend auto-select: Maxine (when installed) → NvOF → passthrough.
+- Legacy `frame_gen_backend=rife` migrates to NvOF.
+- Removed RIFE weights download / IFNet code / safetensors models from the install path.
+- `--framegen-mode latency|balanced|quality`, `--target-fps`, `--frame-gen-backend nvof|maxine|passthrough`.
 
 ## 0.3.0 — 2026-09-22
 

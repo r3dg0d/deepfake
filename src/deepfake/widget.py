@@ -12,8 +12,8 @@ from pathlib import Path
 from .ipc import pid_path, state_dir
 
 
-def widget_shell_dir() -> Path | None:
-    """Resolve the Quickshell project directory that contains shell.qml."""
+def widget_shell_candidates() -> list[Path]:
+    """All known Quickshell project dirs that may host the Deepfake card."""
     env = os.environ.get("DEEPFAKE_PREVIEW_DIR") or os.environ.get("DEEPFAKE_WIDGET_DIR")
     candidates: list[Path] = []
     if env:
@@ -23,10 +23,25 @@ def widget_shell_dir() -> Path | None:
     candidates.append(here.parents[2] / "overlays" / "deepfake-preview" / "quickshell")
     candidates.append(Path.home() / "Projects" / "deepfake-preview" / "quickshell")
     candidates.append(Path.home() / "Projects" / "deepfake" / "overlays" / "deepfake-preview" / "quickshell")
+    seen: set[Path] = set()
+    out: list[Path] = []
     for c in candidates:
+        try:
+            key = c.resolve()
+        except OSError:
+            key = c
+        if key in seen:
+            continue
+        seen.add(key)
         if (c / "shell.qml").is_file():
-            return c
-    return None
+            out.append(c)
+    return out
+
+
+def widget_shell_dir() -> Path | None:
+    """Resolve the Quickshell project directory that contains shell.qml."""
+    cands = widget_shell_candidates()
+    return cands[0] if cands else None
 
 
 def find_qs() -> str | None:
@@ -67,9 +82,8 @@ def _read_pidfile() -> tuple[int | None, str | None]:
 
 
 def cleanup_orphans(*, current_session: str | None = None) -> None:
-    """Kill a leftover Quickshell instance tied to a dead Deepfake session."""
+    """Kill leftover Deepfake Quickshell cards (all known shell paths)."""
     qs = find_qs()
-    shell = widget_shell_dir()
     pid, sid = _read_pidfile()
     if pid is not None and sid != current_session:
         try:
@@ -83,9 +97,9 @@ def cleanup_orphans(*, current_session: str | None = None) -> None:
         else:
             # live foreign process: leave it (another intentional session)
             pass
-    if qs and shell:
-        # qs kill for this config path (idempotent)
-        subprocess.run([qs, "kill", "-p", str(shell)], capture_output=True, check=False)
+    if qs:
+        for shell in widget_shell_candidates():
+            subprocess.run([qs, "kill", "-p", str(shell)], capture_output=True, check=False)
 
 
 class WidgetHandle:
@@ -126,9 +140,12 @@ class WidgetHandle:
 
     def stop(self) -> None:
         qs = self.qs or find_qs()
-        shell = self.shell_dir or widget_shell_dir()
-        if qs and shell:
-            subprocess.run([qs, "kill", "-p", str(shell)], capture_output=True, check=False)
+        if qs:
+            shells = list(widget_shell_candidates())
+            if self.shell_dir and self.shell_dir not in shells:
+                shells.insert(0, self.shell_dir)
+            for shell in shells:
+                subprocess.run([qs, "kill", "-p", str(shell)], capture_output=True, check=False)
         if self.proc is not None and self.proc.poll() is None:
             try:
                 os.killpg(self.proc.pid, signal.SIGTERM)

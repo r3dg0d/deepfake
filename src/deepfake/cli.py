@@ -14,9 +14,8 @@ from .config import DeepfakeConfig, ensure_default_config, load_config, save_con
 from .consent import require_consent
 from .devices import format_devices, list_v4l2_devices, resolve_cuda
 from .doctor import render_doctor, run_doctor
-from .framegen.registry import BACKENDS as FRAMEGEN_BACKENDS
+from .framegen.registry import select_backend_name
 from .framegen.settings import FrameGenSettings
-from .framegen.variants import VARIANTS as RIFE_VARIANTS
 from .identity import list_fakeperson_identities, resolve_source_image
 from .models import install_model, list_models
 from .outputs.sinks import create_sink
@@ -88,15 +87,27 @@ def _common_io_options(fn):
         ),
         click.option(
             "--frame-gen-backend",
-            type=click.Choice(sorted(FRAMEGEN_BACKENDS)),
-            default="rife",
+            type=click.Choice(["auto", "maxine", "nvof", "nvfruc", "passthrough"]),
+            default="auto",
             show_default=True,
         ),
         click.option(
             "--frame-gen-model",
-            type=click.Choice(sorted(RIFE_VARIANTS)),
+            type=click.Choice(["latency", "balanced", "quality", "fast", "medium", "slow"]),
             default=None,
-            help="RIFE variant (default from --preset).",
+            help="NvOF quality preset (default from --preset).",
+        ),
+        click.option(
+            "--framegen-mode",
+            type=click.Choice(["latency", "balanced", "quality"]),
+            default=None,
+            help="Framegen latency/quality mode (default: balanced).",
+        ),
+        click.option(
+            "--target-fps",
+            type=float,
+            default=None,
+            help="Alias for --output-fps.",
         ),
         click.option(
             "--swap-precision",
@@ -129,7 +140,7 @@ def _save_settings(data: dict) -> None:
     p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def _resolve_source(source_path: Path | None, identity: str | None) -> Path:
+def _resolve_source(source_path: Path | None, identity: str | None, *, quiet: bool = False) -> Path:
     """--source / -f / --identity, else the last face used, else ask (terminal only)."""
     settings = _load_settings()
     try:
@@ -138,7 +149,8 @@ def _resolve_source(source_path: Path | None, identity: str | None) -> Path:
         raise click.ClickException(str(e)) from e
     if p is None and settings.get("source") and Path(settings["source"]).is_file():
         p = Path(settings["source"])
-        click.echo(f"deepfake: using last face {p} (change with -f)", err=True)
+        if not quiet:
+            click.echo(f"deepfake: using last face {p} (change with -f)", err=True)
     if p is None:
         ids = list_fakeperson_identities()
         if not sys.stdin.isatty():
@@ -193,11 +205,11 @@ def _fg_from_kwargs(kwargs: dict, source_fps: float) -> FrameGenSettings:
         return resolve_frame_gen(
             cli_value=kwargs.get("frame_gen"),
             no_frame_gen=bool(kwargs.get("no_frame_gen")),
-            output_fps=kwargs.get("output_fps"),
+            output_fps=kwargs.get("output_fps") or kwargs.get("target_fps"),
             source_fps=source_fps,
             preset=kwargs["preset"],
-            backend=kwargs.get("frame_gen_backend") or "rife",
-            variant=kwargs.get("frame_gen_model"),
+            backend=select_backend_name(kwargs.get("frame_gen_backend") or "auto"),
+            variant=kwargs.get("frame_gen_model") or kwargs.get("framegen_mode"),
             progress=lambda m: click.echo(m, err=True),
         )
     except ValueError as e:
@@ -242,6 +254,18 @@ def _cfg_from_kwargs(kwargs: dict):
             multi_face=p.multi_face,
         )
     return cfg
+
+
+def _attach_provenance(path, *, frame_interpolation: bool) -> None:
+    """Sign a finished output file. Preview frames and devices are not paths."""
+    if not path:
+        return
+    file_path = Path(path)
+    if not file_path.is_file():
+        return
+    from .provenance import sign_finished_file
+
+    sign_finished_file(file_path, frame_interpolation=frame_interpolation)
 
 
 def _make_sink(kwargs: dict, cfg, fps: float | None = None, size: tuple[int, int] | None = None):
@@ -292,21 +316,27 @@ def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
         session.apply_frame_gen(fg)
 
     out_fps = fg.resolve_output_fps(cfg.preset.fps) if fg.enabled else float(cfg.preset.fps)
-    click.echo(
-        f"deepfake: {cfg.preset.width}x{cfg.preset.height} · camera {cfg.preset.fps} fps · "
-        f"swap {cfg.swap_precision} · frame-gen {fg.describe()}"
-        + (f" · output {out_fps:g} fps" if fg.enabled else ""),
-        err=True,
-    )
+    quiet = mode == "virtualcam"
+    if not quiet:
+        click.echo(
+            f"deepfake: {cfg.preset.width}x{cfg.preset.height} · camera {cfg.preset.fps} fps · "
+            f"swap {cfg.swap_precision} · frame-gen {fg.describe()}"
+            + (f" · output {out_fps:g} fps" if fg.enabled else ""),
+            err=True,
+        )
     sink = _make_sink(kwargs, cfg, fps=out_fps)
     cap = _parse_input_device(kwargs.get("input_device"), 0)
     session.mark_running()
+    if quiet:
+        click.echo(f"Virtual camera started on {kwargs.get('output_device')}")
 
     def on_stats(snap):
         session.publish_stats(snap)
         if session.stop_requested():
             raise KeyboardInterrupt
 
+    print_stats = bool(kwargs.get("show_metrics", True))
+    final = None
     try:
         final = run_realtime(
             cap,
@@ -315,14 +345,20 @@ def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
             cfg,
             fg,
             source_fps=float(cfg.preset.fps),
-            print_stats=bool(kwargs.get("show_metrics", True)),
+            print_stats=print_stats,
             on_stats=on_stats,
         )
     except KeyboardInterrupt:
-        return
+        final = None
     finally:
         session.close()
-    click.echo("final: " + json.dumps(final), err=True)
+    # The sink is already closed. Sign the file, never the live preview.
+    _attach_provenance(
+        kwargs.get("output_video"),
+        frame_interpolation=bool(fg.enabled and (fg.backend or "") != "passthrough"),
+    )
+    if final is not None and not quiet:
+        click.echo("final: " + json.dumps(final), err=True)
 
 
 def _parse_input_device(raw: str | None, default: int = 0):
@@ -353,6 +389,7 @@ def main(ctx: click.Context) -> None:
       models       Manage models
       doctor       Diagnose installation
       config       Manage preferences
+      provenance   Inspect C2PA credentials on a finished file
 
     \b
     Examples:
@@ -443,45 +480,48 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
     else:
         session.apply_frame_gen(fg)
 
+    frame_interpolation = False
     try:
         if not fg.enabled:
             sink = _make_sink(kwargs, cfg)
             session.mark_running()
             run_loop(str(path), source, sink, cfg)
-            return
-        from .realtime import run_offline
+        else:
+            from .realtime import run_offline
 
-        session.mark_running()
+            session.mark_running()
 
-        def progress_hook(snap_or_msg=None, **kw):
-            # run_offline prints periodically; also publish rough progress via frames
-            if isinstance(snap_or_msg, dict):
-                session.publish_stats(snap_or_msg)
+            def progress_hook(snap_or_msg=None, **kw):
+                # run_offline prints periodically; also publish rough progress via frames
+                if isinstance(snap_or_msg, dict):
+                    session.publish_stats(snap_or_msg)
 
-        summary = run_offline(
-            str(path),
-            source,
-            lambda ww, hh, fps: _make_sink(kwargs, cfg, fps=fps, size=(ww, hh)),
-            cfg,
-            fg,
-            print_stats=bool(kwargs.get("show_metrics", True)),
-        )
-        if total > 0 and summary.get("source_frames"):
-            session.publish_video_progress(
-                pct=100.0 * summary["source_frames"] / max(1, total),
-                eta_s=0.0,
-                alphaface_fps=None,
-                output_fps=summary.get("output_fps"),
-                framegen_multiplier=fg.factor,
-                generated_frames=summary.get("generated_frames"),
+            summary = run_offline(
+                str(path),
+                source,
+                lambda ww, hh, fps: _make_sink(kwargs, cfg, fps=fps, size=(ww, hh)),
+                cfg,
+                fg,
+                print_stats=bool(kwargs.get("show_metrics", True)),
             )
-        click.echo(json.dumps(summary, indent=2))
+            frame_interpolation = bool(summary.get("generated_frames")) and (fg.backend or "") != "passthrough"
+            if total > 0 and summary.get("source_frames"):
+                session.publish_video_progress(
+                    pct=100.0 * summary["source_frames"] / max(1, total),
+                    eta_s=0.0,
+                    alphaface_fps=None,
+                    output_fps=summary.get("output_fps"),
+                    framegen_multiplier=fg.factor,
+                    generated_frames=summary.get("generated_frames"),
+                )
+            click.echo(json.dumps(summary, indent=2))
     except click.ClickException:
         raise
     except Exception as e:  # noqa: BLE001
         raise click.ClickException(str(e)) from e
     finally:
         session.close()
+    _attach_provenance(kwargs.get("output_video"), frame_interpolation=frame_interpolation)
 
 
 @main.command("virtualcam")
@@ -496,18 +536,23 @@ def virtualcam_cmd(v4l2_path: str | None, **kwargs):
     """Stream swapped frames to a virtual webcam (OBS, browsers, calls)."""
     from .devices import LOOPBACK_HELP, find_loopback_device
 
+    # Capture before config defaults: virtualcam stays headless (no preview,
+    # no metrics spam, no Quickshell card) unless the user opts back in.
+    preview_cli = kwargs.get("preview")
+    metrics_cli = kwargs.get("show_metrics")
+    widget_cli = kwargs.get("widget")
     kwargs = _apply_config_defaults(kwargs)
+    kwargs["preview"] = False if preview_cli is None else preview_cli
+    kwargs["show_metrics"] = False if metrics_cli is None else metrics_cli
+    kwargs["widget"] = False if widget_cli is None else widget_cli
     target = kwargs.get("output_device") or v4l2_path or find_loopback_device()
     if not target or not Path(target).exists():
         raise click.ClickException(LOOPBACK_HELP)
     if not os.access(target, os.W_OK):
         raise click.ClickException(f"{target} is not writable by you (need the 'video' group)")
     require_consent(ack=kwargs.get("consent_ack", False), watermark=kwargs.get("watermark", True))
-    source = _resolve_source(kwargs.get("source_path"), kwargs.get("identity"))
+    source = _resolve_source(kwargs.get("source_path"), kwargs.get("identity"), quiet=True)
     kwargs["output_device"] = target
-    click.echo(f"deepfake: virtual camera → {target}", err=True)
-    if kwargs.get("preview") is None:
-        kwargs["preview"] = False
     cfg = _cfg_from_kwargs(kwargs)
     try:
         _run_live(kwargs, source, cfg, mode="virtualcam")
@@ -583,7 +628,7 @@ def config_reset():
 @click.option("--camera-fps", default=30.0, show_default=True)
 @click.option("--target-fps", default=60.0, show_default=True)
 @click.option("--seconds", default=10.0, show_default=True)
-@click.option("--frame-gen-model", type=click.Choice(sorted(RIFE_VARIANTS)), default="4.25", show_default=True)
+@click.option("--frame-gen-model", type=click.Choice(["latency", "balanced", "quality", "fast", "medium", "slow"]), default="balanced", show_default=True)
 @click.option("--swap-precision", type=click.Choice(["fp32", "bf16"]), default="bf16", show_default=True)
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--consent-ack", is_flag=True, hidden=True)
@@ -657,6 +702,27 @@ def models_install(model: str, yes: bool):
     except (KeyError, RuntimeError) as e:
         raise click.ClickException(str(e)) from e
     click.echo(msg)
+
+
+@main.group("provenance")
+def provenance_group():
+    """Inspect C2PA Content Credentials on a finished file."""
+
+
+@provenance_group.command("inspect")
+@click.argument("path", type=click.Path(path_type=Path, exists=True, dir_okay=False))
+def provenance_inspect_cmd(path: Path):
+    """Report the C2PA manifest actually stored in a file.
+
+    Says so when the file has no manifest. Does not claim an invisible
+    watermark or SynthID.
+    """
+    from .provenance import ProvenanceToolError, format_inspection, inspect_file
+
+    try:
+        click.echo(format_inspection(inspect_file(path)))
+    except ProvenanceToolError as e:
+        raise click.ClickException(str(e)) from e
 
 
 if __name__ == "__main__":
