@@ -256,6 +256,18 @@ def _cfg_from_kwargs(kwargs: dict):
     return cfg
 
 
+def _attach_provenance(path, *, frame_interpolation: bool) -> None:
+    """Sign a finished output file. Preview frames and devices are not paths."""
+    if not path:
+        return
+    file_path = Path(path)
+    if not file_path.is_file():
+        return
+    from .provenance import sign_finished_file
+
+    sign_finished_file(file_path, frame_interpolation=frame_interpolation)
+
+
 def _make_sink(kwargs: dict, cfg, fps: float | None = None, size: tuple[int, int] | None = None):
     ffmpeg_args = list(kwargs.get("ffmpeg_out") or ())
     width, height = size or (cfg.preset.width, cfg.preset.height)
@@ -324,6 +336,7 @@ def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
             raise KeyboardInterrupt
 
     print_stats = bool(kwargs.get("show_metrics", True))
+    final = None
     try:
         final = run_realtime(
             cap,
@@ -336,10 +349,15 @@ def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
             on_stats=on_stats,
         )
     except KeyboardInterrupt:
-        return
+        final = None
     finally:
         session.close()
-    if not quiet:
+    # The sink is already closed. Sign the file, never the live preview.
+    _attach_provenance(
+        kwargs.get("output_video"),
+        frame_interpolation=bool(fg.enabled and (fg.backend or "") != "passthrough"),
+    )
+    if final is not None and not quiet:
         click.echo("final: " + json.dumps(final), err=True)
 
 
@@ -371,6 +389,7 @@ def main(ctx: click.Context) -> None:
       models       Manage models
       doctor       Diagnose installation
       config       Manage preferences
+      provenance   Inspect C2PA credentials on a finished file
 
     \b
     Examples:
@@ -461,45 +480,48 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
     else:
         session.apply_frame_gen(fg)
 
+    frame_interpolation = False
     try:
         if not fg.enabled:
             sink = _make_sink(kwargs, cfg)
             session.mark_running()
             run_loop(str(path), source, sink, cfg)
-            return
-        from .realtime import run_offline
+        else:
+            from .realtime import run_offline
 
-        session.mark_running()
+            session.mark_running()
 
-        def progress_hook(snap_or_msg=None, **kw):
-            # run_offline prints periodically; also publish rough progress via frames
-            if isinstance(snap_or_msg, dict):
-                session.publish_stats(snap_or_msg)
+            def progress_hook(snap_or_msg=None, **kw):
+                # run_offline prints periodically; also publish rough progress via frames
+                if isinstance(snap_or_msg, dict):
+                    session.publish_stats(snap_or_msg)
 
-        summary = run_offline(
-            str(path),
-            source,
-            lambda ww, hh, fps: _make_sink(kwargs, cfg, fps=fps, size=(ww, hh)),
-            cfg,
-            fg,
-            print_stats=bool(kwargs.get("show_metrics", True)),
-        )
-        if total > 0 and summary.get("source_frames"):
-            session.publish_video_progress(
-                pct=100.0 * summary["source_frames"] / max(1, total),
-                eta_s=0.0,
-                alphaface_fps=None,
-                output_fps=summary.get("output_fps"),
-                framegen_multiplier=fg.factor,
-                generated_frames=summary.get("generated_frames"),
+            summary = run_offline(
+                str(path),
+                source,
+                lambda ww, hh, fps: _make_sink(kwargs, cfg, fps=fps, size=(ww, hh)),
+                cfg,
+                fg,
+                print_stats=bool(kwargs.get("show_metrics", True)),
             )
-        click.echo(json.dumps(summary, indent=2))
+            frame_interpolation = bool(summary.get("generated_frames")) and (fg.backend or "") != "passthrough"
+            if total > 0 and summary.get("source_frames"):
+                session.publish_video_progress(
+                    pct=100.0 * summary["source_frames"] / max(1, total),
+                    eta_s=0.0,
+                    alphaface_fps=None,
+                    output_fps=summary.get("output_fps"),
+                    framegen_multiplier=fg.factor,
+                    generated_frames=summary.get("generated_frames"),
+                )
+            click.echo(json.dumps(summary, indent=2))
     except click.ClickException:
         raise
     except Exception as e:  # noqa: BLE001
         raise click.ClickException(str(e)) from e
     finally:
         session.close()
+    _attach_provenance(kwargs.get("output_video"), frame_interpolation=frame_interpolation)
 
 
 @main.command("virtualcam")
@@ -680,6 +702,27 @@ def models_install(model: str, yes: bool):
     except (KeyError, RuntimeError) as e:
         raise click.ClickException(str(e)) from e
     click.echo(msg)
+
+
+@main.group("provenance")
+def provenance_group():
+    """Inspect C2PA Content Credentials on a finished file."""
+
+
+@provenance_group.command("inspect")
+@click.argument("path", type=click.Path(path_type=Path, exists=True, dir_okay=False))
+def provenance_inspect_cmd(path: Path):
+    """Report the C2PA manifest actually stored in a file.
+
+    Says so when the file has no manifest. Does not claim an invisible
+    watermark or SynthID.
+    """
+    from .provenance import ProvenanceToolError, format_inspection, inspect_file
+
+    try:
+        click.echo(format_inspection(inspect_file(path)))
+    except ProvenanceToolError as e:
+        raise click.ClickException(str(e)) from e
 
 
 if __name__ == "__main__":

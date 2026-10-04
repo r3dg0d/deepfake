@@ -71,6 +71,6 @@ Shape changes drop history. There is no multi-frame hole fill.
 
 1. SAM 2 tiny for hands and mics the parser calls background or skin. Not this commit.
 2. SegFace-Mobile as an alternate small parser. Not this commit.
-3. Provenance (C2PA 2.4 via c2patool / c2pa-python, or VideoSeal) is a different change. The on-screen label stays. Nothing here claims a platform will show a credential.
+3. VideoSeal is still later. Finished files can get a C2PA manifest (`deepfake provenance inspect`); the on-screen label stays. Nothing here claims a platform will show a credential.
 
 Debug overlays are not part of this commit.

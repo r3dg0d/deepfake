@@ -50,6 +50,8 @@
             python.pkgs.ruff
             python.pkgs.onnxruntime # optional face-parse extra; CPU build unless CUDA EP is present
             pkgs.ffmpeg
+            pkgs.openssl
+            pkgs.c2patool # C2PA signing; not a Python extra and not a system rebuild
             pkgs.v4l-utils
           ];
           # Optional CUDA tip (do not force):

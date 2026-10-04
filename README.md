@@ -11,6 +11,7 @@ This tool is for **research, VFX, avatars, filmmaking, consenting demos, and dis
 - **No anonymity claims.** Output is synthetic; disclose when required.
 - A **one-time notice** on first run (remembered in `~/.config/deepfake/consent.json`; scripts can pre-accept with `DEEPFAKE_CONSENT_ACK=1`).
 - **Synthetic-media watermark** on by default (`--no-watermark` to disable — you still must disclose by other means).
+- **C2PA manifest** on a finished video file when `c2patool` is on `PATH` (`deepfake provenance inspect <file>`). Preview frames are not signed. Set `DEEPFAKE_C2PA_CERT` and `DEEPFAKE_C2PA_KEY`, or a local dev cert is generated in the user cache. That local cert is not a public trust chain, and a platform such as X is not guaranteed to show a label. See `docs/research-2026.md`.
 - Use **only** identities and footage you own or have consent to process.
 - Misuse for non-consensual deepfakes, impersonation, fraud, or harassment is prohibited.
 
