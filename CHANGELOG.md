@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- SAM 2.1 Hiera-Tiny runs in the existing pipx deepfake env (torch 2.6.0+cu124, not upgraded). A CPU box prompt on bench_face.jpg keeps the face center and rejects a flat cheek patch. Hands are not labeled. Pytest still does not require sam2.
+
 - SAM 2.1 Hiera-Tiny checkpoint is catalogued (official URL, 156008466 bytes, sha256). Doctor reports when the sam2 package is missing and the webcam stays on BiSeNet+XSeg. A box-prompt hole is applied only if it cannot eat the face. No hand mask was demonstrated.
 
 - Optional cached XSeg matte (`xseg_2.onnx`) subtracts BiSeNet skin it does not accept as a face, on an interval. Missing weights keep today's BiSeNet-only mask. No SAM download.

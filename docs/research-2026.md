@@ -35,7 +35,7 @@ Credentials are `DEEPFAKE_C2PA_CERT` and `DEEPFAKE_C2PA_KEY` (PEM chain and priv
 
 ## Webcam recommendation (not this commit)
 
-Keep AlphaFace as the swap. Add a small face parser for the blend mask: BiSeNet (CelebAMask-HQ, 19 parts) or SegFace-Mobile (MobileNetV3 SegFace, AAAI 2025). Either one should produce the face region; hair, hat, glasses, and cloth become occluders. SAM 2.1 Hiera-Tiny is now the only SAM checkpoint on disk (`sam2.1_hiera_tiny.pt`, 156008466 bytes, official `dl.fbaipublicfiles.com` asset). The `sam2` package was not installed because it requires torch and this environment has none. No CPU forward was run, and a box prompt was not shown to mask hands. XSeg remains the occluder that actually ran.
+Keep AlphaFace as the swap. Add a small face parser for the blend mask: BiSeNet (CelebAMask-HQ, 19 parts) or SegFace-Mobile (MobileNetV3 SegFace, AAAI 2025). Either one should produce the face region; hair, hat, glasses, and cloth become occluders. SAM 2.1 Hiera-Tiny is the checkpoint on disk. The pipx deepfake interpreter (`torch 2.6.0+cu124`) can import `sam2` without a torch upgrade. A CPU box prompt on `bench_face.jpg` kept the face center at 1.0 and dropped a flat cheek patch to about 0. The nix test env still has no sam2. That was not a labeled hand.
 
 A local `~/.cache/deepfake/models/vision/bisenet_resnet_18.onnx` (~51 MB) was already on this machine. OpenCV 4.13 DNN cannot execute that export. Optional `onnxruntime` can: the graph is 19-class CelebAMask-HQ (checked on `bench_face.jpg`). The nixpkgs runtime used here exposes CPU, not CUDA. No replacement weights were fetched.
 
