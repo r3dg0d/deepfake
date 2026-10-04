@@ -36,6 +36,12 @@ def run_doctor() -> list[Check]:
     occ_ok, occ_detail = OcclusionEngine().status()
     checks.append(Check("Occlusion", occ_ok, occ_detail))
 
+    from .sam_occluder import sam2_runtime_status
+
+    sam_ok, sam_detail = sam2_runtime_status()
+    # Missing SAM is not fatal. Webcam keeps BiSeNet+XSeg.
+    checks.append(Check("SAM2", sam_ok, sam_detail))
+
     # CUDA / GPU
     device = resolve_cuda("auto")
     cuda_ok = device.startswith("cuda")

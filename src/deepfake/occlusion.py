@@ -467,6 +467,9 @@ class OcclusionEngine:
         self._xseg_note = ""
         self._xseg_hold: np.ndarray | None = None
         self._xseg_calls = 0
+        self._sam = None
+        self._sam_calls = 0
+        self._sam_hold: np.ndarray | None = None
 
     def status(self) -> tuple[bool, str]:
         """(parser_available, detail) for doctor. Does not claim a parse it cannot run."""
@@ -570,6 +573,10 @@ class OcclusionEngine:
         if extra is not None:
             occ = np.maximum(occ, extra)
             visible = combine_visible_mask(face, occ)
+        sam_extra, sam_note = self._sam_extra(frame, labels, (x, y, x1, y1), (fh, fw))
+        if sam_extra is not None:
+            occ = np.maximum(occ, sam_extra)
+            visible = combine_visible_mask(face, occ)
         provider = self._backend.provider or "CPUExecutionProvider"
         detail = (
             f"BiSeNet CelebAMask-HQ on {provider}; swap classes"
@@ -577,7 +584,47 @@ class OcclusionEngine:
         )
         if xseg_note:
             detail = f"{detail}; {xseg_note}"
+        if sam_note:
+            detail = f"{detail}; {sam_note}"
         return face, occ, visible, detail
+
+    def _sam_extra(
+        self,
+        frame: np.ndarray,
+        labels: np.ndarray,
+        box: tuple[int, int, int, int],
+        hw: tuple[int, int],
+    ) -> tuple[np.ndarray | None, str]:
+        """Full-frame SAM hole, or nothing if SAM is absent or the mask is unsafe."""
+        from .sam_occluder import SAM_INTERVAL, Sam2BoxOccluder, checkpoint_path, sam2_runtime_status, sam_hole_occluder
+
+        ok, _status = sam2_runtime_status()
+        if not ok or self._sam is False:
+            return None, ""
+        skin = (np.asarray(labels) == 1).astype(np.float32)
+        feature = float(np.isin(labels, _FEATURE_CLASS_IDS).mean()) if labels.size else 0.0
+        run = xseg_should_run(self._sam_calls, float(skin.mean()) if skin.size else 0.0, feature, interval=SAM_INTERVAL)
+        self._sam_calls += 1
+        x, y, x1, y1 = box
+        if not run and self._sam_hold is not None and self._sam_hold.shape == hw:
+            return self._sam_hold, f"SAM 2.1 tiny held (every {SAM_INTERVAL} frames)"
+        if self._sam is None:
+            path = checkpoint_path()
+            self._sam = Sam2BoxOccluder(path) if path.is_file() else False
+        if self._sam is False:
+            return None, ""
+        keep = self._sam.keep_mask(frame, (x, y, x1, y1))
+        if keep is None or keep.shape != skin.shape:
+            if self._sam.error:
+                self._sam = False
+            return None, ""
+        hole = sam_hole_occluder(keep, skin)
+        if hole is None:
+            return None, ""
+        extra = np.zeros(hw, dtype=np.float32)
+        extra[y:y1, x:x1] = hole
+        self._sam_hold = extra
+        return extra, "SAM 2.1 tiny box prompt; skin outside the main face object is an occluder"
 
     def _note_xseg_file(self) -> None:
         if self._xseg_note:

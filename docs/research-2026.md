@@ -35,7 +35,7 @@ Credentials are `DEEPFAKE_C2PA_CERT` and `DEEPFAKE_C2PA_KEY` (PEM chain and priv
 
 ## Webcam recommendation (not this commit)
 
-Keep AlphaFace as the swap. Add a small face parser for the blend mask: BiSeNet (CelebAMask-HQ, 19 parts) or SegFace-Mobile (MobileNetV3 SegFace, AAAI 2025). Either one should produce the face region; hair, hat, glasses, and cloth become occluders. SAM 2, SAM 2.1 tiny, and MobileSAM were not cached under `~/.cache/deepfake`, `~/.cache/huggingface`, or this repo, so they were not downloaded. The cached occluder that does run is `xseg_2.onnx` (DeepFaceLab XSeg, onnxruntime CPU). It is a face matte, not a hand class. The smallest later model for a real promptable hand/mic mask would be SAM 2.1 tiny (Hiera-T), which is not on this machine.
+Keep AlphaFace as the swap. Add a small face parser for the blend mask: BiSeNet (CelebAMask-HQ, 19 parts) or SegFace-Mobile (MobileNetV3 SegFace, AAAI 2025). Either one should produce the face region; hair, hat, glasses, and cloth become occluders. SAM 2.1 Hiera-Tiny is now the only SAM checkpoint on disk (`sam2.1_hiera_tiny.pt`, 156008466 bytes, official `dl.fbaipublicfiles.com` asset). The `sam2` package was not installed because it requires torch and this environment has none. No CPU forward was run, and a box prompt was not shown to mask hands. XSeg remains the occluder that actually ran.
 
 A local `~/.cache/deepfake/models/vision/bisenet_resnet_18.onnx` (~51 MB) was already on this machine. OpenCV 4.13 DNN cannot execute that export. Optional `onnxruntime` can: the graph is 19-class CelebAMask-HQ (checked on `bench_face.jpg`). The nixpkgs runtime used here exposes CPU, not CUDA. No replacement weights were fetched.
 

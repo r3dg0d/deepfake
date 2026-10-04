@@ -62,6 +62,14 @@ BiSeNet has no hand class. Hands become skin or background. Background already s
 
 It does not run every frame. The first frame and every 4th frame recompute it (about 30 ms on CPU for the matte alone). Between those, a frame also recomputes when skin covers at least 12% of the crop and eyes/brows/nose/mouth/lips cover under 2% (the parser's skin mask flooded). Otherwise the last matte is held. This is not a hand detector and it does not claim SAM or SynthID.
 
+## SAM 2.1 Hiera-Tiny (optional, not a proven hand mask)
+
+The only SAM file downloaded is the official Meta asset `sam2.1_hiera_tiny.pt` from `https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt` (156008466 bytes, sha256 `7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69`). It lives in `~/.cache/deepfake/models/vision/`. Apache-2.0. Not base, small, or large.
+
+Running it needs the official `sam2` package, which depends on `torch>=2.5.1`. That extra is declared and was **not** installed. This environment had no torch, and installing one would pull a new torch into the env. `deepfake doctor` has a SAM2 line. When the package or the checkpoint is missing it says occlusion stays BiSeNet+XSeg and the webcam still runs. A missing SAM does not fail the session closed.
+
+If the package is present later, the engine asks SAM for the main object with a box 1.25× the face, every 8 frames (or sooner when BiSeNet skin floods the crop). Skin inside the face crop that the mask leaves out is an occluder only when the mask still covers at least 55% of the crop and the hole is under 35% of the skin. Otherwise the SAM mask is discarded. That gate was unit-tested with a rectangle. It was **not** run on `bench_face.jpg`, so this commit does not claim that hands, mics, cups, or phones are actually masked. A box prompt alone still needs a point before that claim is honest. XSeg remains the only extra matte that has been executed here.
+
 ## Temporal rule
 
 `smooth_visible_mask(raw, temporal_state)` runs on every parser or test-double mask. The ellipse fallback does not smooth and returns the same `temporal_state` object it was given (`None` stays `None`). The pipeline stores the returned state per face and passes it on the next frame. `None` means no history.
@@ -77,7 +85,7 @@ Shape changes drop history. There is no multi-frame hole fill.
 
 ## Later
 
-1. SAM 2 / SAM 2.1 tiny / MobileSAM were not in `~/.cache/deepfake`, `~/.cache/huggingface`, or the repo. Not downloaded. The cached stand-in is XSeg below.
+1. SAM 2.1 Hiera-Tiny is cached. It is not a proven hand mask yet. See the SAM section. Base, small, and large were not downloaded.
 2. SegFace-Mobile as an alternate small parser. Not this commit.
 3. VideoSeal is still later. Finished files can get a C2PA manifest (`deepfake provenance inspect`); the on-screen label stays. Nothing here claims a platform will show a credential.
 

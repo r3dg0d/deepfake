@@ -61,6 +61,23 @@ CATALOG: dict[str, dict[str, Any]] = {
         "install": "insightface",
         "notes": "Fallback when AlphaFace weights unavailable. Clear NC warning on install.",
     },
+    "sam2.1-hiera-tiny": {
+        "name": "sam2.1-hiera-tiny",
+        "backend": "occlusion",
+        "source": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt",
+        "paper": "arXiv:2408.00714",
+        "code_license": "Apache-2.0 (facebookresearch/sam2)",
+        "weights_license": "Apache-2.0 (Meta SAM 2.1 Hiera-Tiny checkpoint only; not base/small/large)",
+        "size_hint": "156008466 bytes",
+        "checksum": "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69",
+        "install": "url",
+        "filename": "sam2.1_hiera_tiny.pt",
+        "notes": (
+            "Official facebookresearch/sam2 release asset. Optional face-box occluder. "
+            "The sam2 extra pulls torch>=2.5.1 and is not installed by default. "
+            "Without that package the webcam stays on BiSeNet+XSeg."
+        ),
+    },
 }
 
 
@@ -107,6 +124,10 @@ def list_models() -> list[ModelInfo]:
 
 
 def _looks_installed(name: str, path: Path) -> bool:
+    if name == "sam2.1-hiera-tiny":
+        from .sam_occluder import SAM21_TINY_NAME
+
+        return (models_dir() / "vision" / SAM21_TINY_NAME).is_file()
     if not path.is_dir():
         return False
     if name == "alphaface":
@@ -183,6 +204,8 @@ def install_model(name: str, *, yes: bool = False) -> str:
         return _install_alphaface(target, meta)
     if name == "inswapper":
         return _install_inswapper(target, meta)
+    if name == "sam2.1-hiera-tiny":
+        return _install_sam21_tiny(meta)
     raise RuntimeError(f"no installer for {name}")
 
 
@@ -273,3 +296,36 @@ def _install_rife(target: Path) -> str:
         "Nothing to download — ensure the NVIDIA driver provides libnvidia-opticalflow.so.1"
     )
 
+
+
+def _install_sam21_tiny(meta: dict[str, Any]) -> str:
+    """Download only the official Hiera-Tiny checkpoint. Refuse anything over 200 MB."""
+    from .sam_occluder import SAM21_TINY_BYTES, SAM21_TINY_NAME, SAM21_TINY_SHA256, SAM21_TINY_URL
+
+    dest = models_dir() / "vision" / SAM21_TINY_NAME
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_file() and dest.stat().st_size == SAM21_TINY_BYTES and file_sha256(dest) == SAM21_TINY_SHA256:
+        _mark_installed("sam2.1-hiera-tiny", {"sha256": SAM21_TINY_SHA256, "bytes": SAM21_TINY_BYTES})
+        return f"already present: {dest} sha256={SAM21_TINY_SHA256}"
+    request = urllib.request.Request(SAM21_TINY_URL, method="HEAD")
+    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 — pinned official URL
+        length = int(response.headers.get("Content-Length") or "0")
+    cap = 200 * 1024 * 1024
+    if length <= 0 or length > cap or length != SAM21_TINY_BYTES:
+        raise RuntimeError(
+            f"refusing SAM 2.1 download: Content-Length {length} bytes "
+            f"(expected {SAM21_TINY_BYTES}, cap {cap}). Not base/small/large, and not saved."
+        )
+    part = dest.with_suffix(dest.suffix + ".part")
+    urllib.request.urlretrieve(SAM21_TINY_URL, part)  # noqa: S310 — pinned official URL
+    got = part.stat().st_size
+    if got != SAM21_TINY_BYTES:
+        part.unlink(missing_ok=True)
+        raise RuntimeError(f"refusing SAM 2.1 download: wrote {got} bytes, expected {SAM21_TINY_BYTES}")
+    digest = file_sha256(part)
+    if digest != SAM21_TINY_SHA256:
+        part.unlink(missing_ok=True)
+        raise RuntimeError(f"refusing SAM 2.1 download: sha256 {digest} != {SAM21_TINY_SHA256}")
+    part.replace(dest)
+    _mark_installed("sam2.1-hiera-tiny", {"sha256": digest, "bytes": got, "url": meta.get("source")})
+    return f"saved {dest} ({got} bytes) sha256={digest}"

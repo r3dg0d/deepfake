@@ -12,6 +12,7 @@ from deepfake.occlusion import (
     xseg_should_run,
 )
 from deepfake.paths import models_dir
+from deepfake.sam_occluder import sam2_runtime_status, sam_hole_occluder
 
 HAND_BGR = (30, 40, 220)  # synthetic hand swatch, not a skin tone
 HAIR_BGR = (20, 20, 20)
@@ -395,3 +396,28 @@ def test_xseg_rejects_flat_overlay_on_bench_face():
     assert punched.visible_face_mask[y0:y1, x0:x1].mean() < clean.visible_face_mask[y0:y1, x0:x1].mean()
     # Timing is reported by the test process; a hang would fail the suite.
     assert clean_s < 5.0 and punched_s < 5.0
+
+
+def test_sam_hole_subtracts_a_minority_rectangle_and_refuses_to_eat_the_face():
+    skin = np.ones((40, 40), dtype=np.float32)
+    keep = np.ones((40, 40), dtype=np.float32)
+    keep[10:20, 12:28] = 0.0
+    hole = sam_hole_occluder(keep, skin)
+    assert hole is not None
+    vis = combine_visible_mask(skin, hole)
+    assert vis[14, 16] == 0.0
+    assert vis[2, 2] == 1.0
+    # A box prompt that misses the face must not become an occluder.
+    assert sam_hole_occluder(np.zeros((40, 40), dtype=np.float32), skin) is None
+    mostly_gone = np.zeros((40, 40), dtype=np.float32)
+    mostly_gone[:8, :] = 1.0
+    assert sam_hole_occluder(mostly_gone, skin) is None
+
+
+def test_sam2_missing_package_does_not_change_the_fallback(monkeypatch):
+    monkeypatch.setattr("deepfake.sam_occluder.sam2_package_available", lambda: False)
+    # Isolated XDG has no checkpoint, which is the same fallback the webcam uses.
+    ok, detail = sam2_runtime_status()
+    assert ok is False
+    assert "BiSeNet+XSeg" in detail
+    assert "webcam still runs" in detail
