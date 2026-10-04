@@ -75,6 +75,59 @@ class OcclusionResult:
     apply_to_composite: bool = False
 
 
+# Asymmetric temporal filter on the visible-face mask. See docs/architecture/occlusion.md.
+# Weight on the new sample. Smaller mask (occlusion arriving) moves fast; a larger
+# mask (occlusion leaving) moves slower. A near-empty frame is held once.
+MASK_OCCLUDE_ALPHA = 0.9
+MASK_REVEAL_ALPHA = 0.35
+MASK_DROPOUT_RATIO = 0.05
+MASK_DROPOUT_MIN_AREA = 32.0
+
+
+def smooth_visible_mask(
+    raw: np.ndarray,
+    temporal_state: Any,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Smooth one visible-face mask. ``temporal_state`` from the previous result, or None.
+
+    Dropout (raw area < 5% of the previous area, and the previous area is real):
+    keep the last mask for this frame only. A second empty frame is not held.
+
+    Otherwise, per pixel ``out = prev + alpha * (raw - prev)`` with
+    ``alpha = 0.9`` where ``raw < prev`` and ``alpha = 0.35`` where ``raw > prev``.
+    """
+    current = np.clip(np.asarray(raw, dtype=np.float32), 0.0, 1.0)
+    prev = _previous_visible(temporal_state, current.shape)
+    if prev is None:
+        out = current.copy()
+        return out, {"visible": out.copy(), "dropout_holds": 0}
+
+    prev_area = float(prev.sum())
+    raw_area = float(current.sum())
+    held = int(temporal_state.get("dropout_holds", 0)) if isinstance(temporal_state, dict) else 0
+    dropout = prev_area >= MASK_DROPOUT_MIN_AREA and raw_area < MASK_DROPOUT_RATIO * prev_area
+    if dropout and held < 1:
+        out = prev.copy()
+        return out, {"visible": out.copy(), "dropout_holds": held + 1}
+
+    smaller = current < prev
+    alpha = np.where(smaller, MASK_OCCLUDE_ALPHA, MASK_REVEAL_ALPHA).astype(np.float32)
+    out = np.clip(prev + alpha * (current - prev), 0.0, 1.0)
+    return out, {"visible": out.copy(), "dropout_holds": 0}
+
+
+def _previous_visible(temporal_state: Any, shape: tuple[int, ...]) -> np.ndarray | None:
+    if not isinstance(temporal_state, dict):
+        return None
+    prev = temporal_state.get("visible")
+    if prev is None:
+        return None
+    prev = np.asarray(prev, dtype=np.float32)
+    if prev.shape != shape:
+        return None
+    return prev
+
+
 def combine_visible_mask(face_mask: np.ndarray, occluder_mask: np.ndarray) -> np.ndarray:
     """Face region with occluder pixels removed. Both masks are float HxW in 0..1."""
     face = np.clip(np.asarray(face_mask, dtype=np.float32), 0.0, 1.0)
@@ -267,8 +320,9 @@ class _BiseNetSession:
 class OcclusionEngine:
     """Estimate the visible-face mask for one tracked face.
 
-    ``temporal_state`` is accepted and returned unchanged. This slice does not
-    filter masks across frames, so tests may pass ``None``.
+    ``temporal_state`` may be ``None``. A parser mask is smoothed with
+    ``smooth_visible_mask`` and the new state is returned. The ellipse fallback
+    does not invent a state: the object you passed is returned as-is.
     """
 
     def __init__(
@@ -307,12 +361,13 @@ class OcclusionEngine:
         parsed = self._from_bisenet(frame, box)
         if parsed is not None:
             face, occ, visible, detail = parsed
+            smoothed, new_state = smooth_visible_mask(visible, temporal_state)
             return OcclusionResult(
                 face_mask=face,
                 occluder_mask=occ,
-                visible_face_mask=visible,
+                visible_face_mask=smoothed,
                 confidence=float(visible.mean()) if visible.size else 0.0,
-                temporal_state=temporal_state,
+                temporal_state=new_state,
                 parser_available=True,
                 detail=detail,
                 apply_to_composite=True,
@@ -345,12 +400,14 @@ class OcclusionEngine:
         occ = np.clip(np.asarray(self._parser.occluder_mask(frame, box), dtype=np.float32), 0.0, 1.0)
         if occ.shape != face.shape:
             raise ValueError(f"occluder shape {occ.shape} != face {face.shape}")
+        raw = combine_visible_mask(face, occ)
+        smoothed, new_state = smooth_visible_mask(raw, temporal_state)
         return OcclusionResult(
             face_mask=face,
             occluder_mask=occ,
-            visible_face_mask=combine_visible_mask(face, occ),
-            confidence=1.0,
-            temporal_state=temporal_state,
+            visible_face_mask=smoothed,
+            confidence=float(raw.mean()) if raw.size else 0.0,
+            temporal_state=new_state,
             parser_available=False,
             detail="deterministic test double; BiSeNet parser unavailable (no model executed)",
             apply_to_composite=True,

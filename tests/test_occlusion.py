@@ -235,3 +235,61 @@ def test_bisenet_parses_bench_face_on_cpu():
     blocked = est.visible_face_mask[est.occluder_mask > 0.5]
     assert blocked.size > 0
     assert blocked.max() == 0.0
+
+
+class _ScriptedOccluder:
+    """Test double. mode is 'open', 'zero', or 'hole'."""
+
+    def __init__(self) -> None:
+        self.mode = "open"
+
+    def occluder_mask(self, frame, box):
+        mask = np.zeros(frame.shape[:2], dtype=np.float32)
+        if self.mode == "zero":
+            mask[:] = 1.0
+        elif self.mode == "hole":
+            mask[70:95, 70:95] = 1.0
+        return mask
+
+
+def _run_scripted(mode_frames: list[str]):
+    parser = _ScriptedOccluder()
+    engine = OcclusionEngine(parser=parser)
+    frame = np.zeros((160, 160, 3), dtype=np.uint8)
+    box = FaceBox(30, 30, 100, 100)
+    face = np.ones(frame.shape[:2], dtype=np.float32)
+    state = None
+    last = None
+    for mode in mode_frames:
+        parser.mode = mode
+        last = engine.estimate(frame, box, None, face, state)
+        state = last.temporal_state
+    return last
+
+
+def test_one_dropped_frame_does_not_zero_visible_mask():
+    # Three stable frames, then a single empty parse. Unsmoothed output is all zeros.
+    est = _run_scripted(["open", "open", "open", "zero"])
+    assert est.visible_face_mask[80, 80] > 0.8
+    assert est.visible_face_mask.sum() > 1000
+    assert est.confidence < 0.05  # raw parse collapsed; the held mask is what we composite
+    assert est.temporal_state["dropout_holds"] == 1
+
+
+def test_sudden_hole_shows_within_two_frames_and_reopens_slower():
+    # A hand-sized hole must be visible within one frame. Unsmoothed code snaps
+    # the same pixel back to 1 the moment the hole leaves; the reveal step must not.
+    holed = _run_scripted(["open", "open", "hole"])
+    assert holed.visible_face_mask[80, 80] < 0.25
+    assert holed.visible_face_mask[50, 50] > 0.8  # rest of the face stays open
+    reopened = _run_scripted(["open", "open", "hole", "hole", "open"])
+    # After two hole frames the pixel is ~0.01; one reveal step at 0.35 stays well below 1.
+    assert reopened.visible_face_mask[80, 80] < 0.75
+    assert reopened.visible_face_mask[80, 80] > 0.2
+
+
+def test_second_empty_frame_is_not_held_open():
+    est = _run_scripted(["open", "open", "zero", "zero"])
+    # First empty frame held the open mask; the second must follow the empty parse.
+    assert est.visible_face_mask[80, 80] < 0.25
+    assert est.temporal_state["dropout_holds"] == 0
