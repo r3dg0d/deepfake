@@ -19,7 +19,7 @@ face track
 | --- | --- |
 | Face track | **Still Haar.** `OpenCVHaarDetector` only. `FaceBox.landmarks` stays empty. YuNet is unused. The engine accepts a box and ignores landmarks. |
 | Face parse | **BiSeNet when it can run.** Looks for `bisenet_resnet_18.onnx` under the deepfake cache (`$XDG_CACHE_HOME/deepfake` or `~/.cache/deepfake`) and `models/vision` in the repo. Runtime is optional `onnxruntime` (`parse` extra / devShell). CUDA execution provider is used only if that build already has it; otherwise CPU. OpenCV DNN cannot run this export. If the file is missing, onnxruntime is missing, or the graph is not 19-class, the engine says `parser unavailable`, `apply_to_composite` is false, and paste keeps the ellipse. `deepfake doctor` shows Occlusion as failed in that case. The first swapped frame also prints `occlusion: inactive — …` on stderr. No download. |
-| Occluder | **Class map below, plus the color-key test double.** `combine_visible_mask` is `clip(face * (1 - occluder))`. |
+| Occluder | **Class map below, plus optional XSeg, plus the color-key test double.** `combine_visible_mask` is `clip(face * (1 - occluder))`. |
 | Temporal filter | **On the visible mask.** `smooth_visible_mask`, fed back through `temporal_state`. Rule below. No SAM. |
 | Visible face mask | **Swap classes only** when BiSeNet runs (see the table). Fallback visible mask equals the ellipse and is **not** passed into `paste_face` (a second multiply would shrink the ellipse). |
 | Composite | **Ellipse ∩ visible mask** when a mask is passed. Omitting it is the old ellipse. |
@@ -54,6 +54,14 @@ The ONNX file has no label list. The head is the usual 19-class CelebAMask-HQ or
 
 Swap ids are `1, 2, 3, 4, 5, 10, 11, 12, 13`. The crop is resized to 512, ImageNet-normalized RGB, and the `output` logits are argmaxed. That label map is resized with nearest-neighbor back onto the paste box. `paste_face` then intersects it with the feathered ellipse.
 
+## XSeg occluder (optional)
+
+BiSeNet has no hand class. Hands become skin or background. Background already stays the target. Skin would be swapped unless something else punches it out.
+
+`xseg_2.onnx` next to the BiSeNet file (this machine: `~/.cache/deepfake/models/vision/xseg_2.onnx`, about 68 MB) is a DeepFaceLab XSeg matte. Input is 256×256 RGB in 0..1, NHWC, output one channel. High means "face", not "hand". The occluder added on top of the class map is BiSeNet skin times `(1 - matte)`. Hair, cloth, and glasses stay on the class map. If the file is missing, onnxruntime is missing, or the graph will not run, that term is skipped and the mask is BiSeNet-only. Nothing is downloaded.
+
+It does not run every frame. The first frame and every 4th frame recompute it (about 30 ms on CPU for the matte alone). Between those, a frame also recomputes when skin covers at least 12% of the crop and eyes/brows/nose/mouth/lips cover under 2% (the parser's skin mask flooded). Otherwise the last matte is held. This is not a hand detector and it does not claim SAM or SynthID.
+
 ## Temporal rule
 
 `smooth_visible_mask(raw, temporal_state)` runs on every parser or test-double mask. The ellipse fallback does not smooth and returns the same `temporal_state` object it was given (`None` stays `None`). The pipeline stores the returned state per face and passes it on the next frame. `None` means no history.
@@ -69,7 +77,7 @@ Shape changes drop history. There is no multi-frame hole fill.
 
 ## Later
 
-1. SAM 2 tiny for hands and mics the parser calls background or skin. Not this commit.
+1. SAM 2 / SAM 2.1 tiny / MobileSAM were not in `~/.cache/deepfake`, `~/.cache/huggingface`, or the repo. Not downloaded. The cached stand-in is XSeg below.
 2. SegFace-Mobile as an alternate small parser. Not this commit.
 3. VideoSeal is still later. Finished files can get a C2PA manifest (`deepfake provenance inspect`); the on-screen label stays. Nothing here claims a platform will show a credential.
 

@@ -4,7 +4,13 @@ import numpy as np
 
 from deepfake.composite import paste_face
 from deepfake.detect import FaceBox
-from deepfake.occlusion import ColorKeyOccluder, OcclusionEngine, combine_visible_mask
+from deepfake.occlusion import (
+    ColorKeyOccluder,
+    OcclusionEngine,
+    combine_visible_mask,
+    xseg_occluder_from_keep,
+    xseg_should_run,
+)
 from deepfake.paths import models_dir
 
 HAND_BGR = (30, 40, 220)  # synthetic hand swatch, not a skin tone
@@ -205,7 +211,7 @@ def test_pipeline_keeps_ellipse_when_parser_unavailable(monkeypatch, capsys):
     assert "occlusion: active" not in err
 
 
-def test_bisenet_parses_bench_face_on_cpu():
+def test_bisenet_parses_bench_face_on_cpu(tmp_path):
     pytest = __import__("pytest")
     pytest.importorskip("onnxruntime")
     from pathlib import Path
@@ -215,11 +221,14 @@ def test_bisenet_parses_bench_face_on_cpu():
     weight = Path.home() / ".cache/deepfake/models/vision/bisenet_resnet_18.onnx"
     if not weight.is_file():
         pytest.skip("cached bisenet weight is not on this machine")
+    # Keep this check BiSeNet-only. The real cache also has xseg_2.onnx beside it.
+    isolated = tmp_path / "bisenet_resnet_18.onnx"
+    isolated.symlink_to(weight)
     image = Path(__file__).resolve().parents[1] / "src/deepfake/assets/bench_face.jpg"
     frame = cv2.imread(str(image), cv2.IMREAD_COLOR)
     assert frame is not None
     h, w = frame.shape[:2]
-    engine = OcclusionEngine(weights_path=weight)
+    engine = OcclusionEngine(weights_path=isolated)
     est = engine.estimate(frame, FaceBox(0, 0, w, h), None, None, None)
     assert est.parser_available is True
     assert est.apply_to_composite is True
@@ -293,3 +302,96 @@ def test_second_empty_frame_is_not_held_open():
     # First empty frame held the open mask; the second must follow the empty parse.
     assert est.visible_face_mask[80, 80] < 0.25
     assert est.temporal_state["dropout_holds"] == 0
+
+
+class _RectangleOccluder:
+    """Mock occluder: a fixed rectangle, not a color key and not a model."""
+
+    def __init__(self, rect: tuple[int, int, int, int]) -> None:
+        self.rect = rect
+
+    def occluder_mask(self, frame, box):
+        del box
+        mask = np.zeros(frame.shape[:2], dtype=np.float32)
+        y0, y1, x0, x1 = self.rect
+        mask[y0:y1, x0:x1] = 1.0
+        return mask
+
+
+def test_rectangle_occluder_is_subtracted_from_the_face_mask():
+    frame, box = _frame_and_box()
+    face = np.ones(frame.shape[:2], dtype=np.float32)
+    est = OcclusionEngine(parser=_RectangleOccluder((90, 130, 80, 140))).estimate(
+        frame, box, None, face, None
+    )
+    assert est.occluder_mask[100, 100] == 1.0
+    assert est.visible_face_mask[90:130, 80:140].max() == 0.0
+    assert est.visible_face_mask[20, 20] == 1.0
+    assert est.apply_to_composite is True
+
+
+def test_xseg_keep_mask_punches_skin_rectangle():
+    skin = np.zeros((8, 8), dtype=np.float32)
+    skin[2:6, 1:5] = 1.0
+    keep = np.ones((8, 8), dtype=np.float32)
+    keep[2:6, 1:5] = 0.0
+    occ = xseg_occluder_from_keep(skin, keep)
+    assert occ[3, 2] == 1.0
+    assert occ[0, 0] == 0.0
+    # Skin the matte still accepts is not an occluder.
+    keep[2:6, 1:5] = 1.0
+    assert xseg_occluder_from_keep(skin, keep).sum() == 0.0
+
+
+def test_xseg_runs_on_interval_or_skin_flood():
+    assert xseg_should_run(0, 0.0, 0.0) is True
+    assert xseg_should_run(1, 0.2, 0.05) is False
+    assert xseg_should_run(4, 0.0, 0.0) is True
+    assert xseg_should_run(2, 0.2, 0.01) is True
+
+
+def test_missing_xseg_leaves_bisenet_mask_math_unchanged(tmp_path):
+    # No weight on this path. The rectangle helper is the whole occluder.
+    skin = np.ones((4, 4), dtype=np.float32)
+    keep = np.ones((4, 4), dtype=np.float32)
+    assert xseg_occluder_from_keep(skin, keep).sum() == 0.0
+    assert not (tmp_path / "xseg_2.onnx").is_file()
+
+
+def test_xseg_rejects_flat_overlay_on_bench_face():
+    pytest = __import__("pytest")
+    pytest.importorskip("onnxruntime")
+    import time
+    from pathlib import Path
+
+    import cv2
+
+    bisenet = Path.home() / ".cache/deepfake/models/vision/bisenet_resnet_18.onnx"
+    xseg = bisenet.with_name("xseg_2.onnx")
+    if not bisenet.is_file() or not xseg.is_file():
+        pytest.skip("cached bisenet or xseg_2.onnx is not on this machine")
+    image = Path(__file__).resolve().parents[1] / "src/deepfake/assets/bench_face.jpg"
+    frame = cv2.imread(str(image), cv2.IMREAD_COLOR)
+    assert frame is not None
+    h, w = frame.shape[:2]
+    box = FaceBox(0, 0, w, h)
+    started = time.perf_counter()
+    clean = OcclusionEngine(weights_path=bisenet).estimate(frame, box, None, None, None)
+    clean_s = time.perf_counter() - started
+    assert clean.parser_available is True
+    assert "XSeg" in clean.detail
+    covered = frame.copy()
+    y0, y1, x0, x1 = h // 3, h // 2, w // 3, w // 2
+    color = tuple(int(v) for v in frame[h // 2, w // 2])
+    covered[y0:y1, x0:x1] = color
+    # A new engine so this is a fresh matte, not the 4-frame hold of the clean face.
+    started = time.perf_counter()
+    punched = OcclusionEngine(weights_path=bisenet).estimate(covered, box, None, None, None)
+    punched_s = time.perf_counter() - started
+    assert "XSeg" in punched.detail
+    clean_roi = clean.occluder_mask[y0:y1, x0:x1].mean()
+    punched_roi = punched.occluder_mask[y0:y1, x0:x1].mean()
+    assert punched_roi > clean_roi + 0.15
+    assert punched.visible_face_mask[y0:y1, x0:x1].mean() < clean.visible_face_mask[y0:y1, x0:x1].mean()
+    # Timing is reported by the test process; a hang would fail the suite.
+    assert clean_s < 5.0 and punched_s < 5.0

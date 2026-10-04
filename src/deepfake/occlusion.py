@@ -3,6 +3,10 @@
 The live path calls ``OcclusionEngine``. When BiSeNet cannot run, the result
 says the parser is unavailable and the composite keeps today's ellipse (the
 visible mask is not applied). Nothing is downloaded.
+
+An optional cached XSeg matte (``xseg_2.onnx``) can punch holes in BiSeNet skin
+where the matte does not see a face (hands and mics BiSeNet calls skin). If that
+file is missing or will not run, the mask stays BiSeNet-only.
 """
 
 from __future__ import annotations
@@ -50,7 +54,16 @@ SWAP_CLASS_IDS: tuple[int, ...] = (1, 2, 3, 4, 5, 10, 11, 12, 13)
 OCCLUDER_CLASS_IDS: tuple[int, ...] = (6, 9, 15, 16, 17, 18)
 
 _WEIGHT_NAMES = ("bisenet_resnet_18.onnx",)
+_XSEG_NAMES = ("xseg_2.onnx",)
 _INPUT = 512
+_XSEG_INPUT = 256
+# Recompute the matte on this period. ~30 ms on CPU, so not every frame.
+XSEG_INTERVAL = 4
+# BiSeNet skin with almost no eyes/nose/mouth: a hand-sized flood. Forces a
+# matte refresh between interval frames. A normal portrait stays on the interval.
+XSEG_SKIN_FLOOD = 0.12
+XSEG_FEATURE_FLOOR = 0.02
+_FEATURE_CLASS_IDS = (2, 3, 4, 5, 10, 11, 12, 13)
 _IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 _IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
@@ -192,6 +205,22 @@ class ColorKeyOccluder:
         return mask
 
 
+def xseg_should_run(frame_index: int, skin_frac: float, feature_frac: float, *, interval: int = XSEG_INTERVAL) -> bool:
+    """True on the interval, and when skin flooded the crop between those frames."""
+    if interval <= 1 or frame_index % interval == 0:
+        return True
+    return skin_frac >= XSEG_SKIN_FLOOD and feature_frac < XSEG_FEATURE_FLOOR
+
+
+def xseg_occluder_from_keep(skin: np.ndarray, keep: np.ndarray) -> np.ndarray:
+    """Occluder is BiSeNet skin the XSeg face matte rejected. Both are HxW 0..1."""
+    skin_m = np.clip(np.asarray(skin, dtype=np.float32), 0.0, 1.0)
+    keep_m = np.clip(np.asarray(keep, dtype=np.float32), 0.0, 1.0)
+    if skin_m.shape != keep_m.shape:
+        raise ValueError(f"xseg shape mismatch: skin {skin_m.shape} vs keep {keep_m.shape}")
+    return np.clip(skin_m * (1.0 - keep_m), 0.0, 1.0)
+
+
 def _weight_candidates(explicit: Path | None) -> list[Path]:
     if explicit is not None:
         return [explicit] if explicit.is_file() else []
@@ -205,6 +234,31 @@ def _weight_candidates(explicit: Path | None) -> list[Path]:
     seen: set[Path] = set()
     for root in roots:
         for name in _WEIGHT_NAMES:
+            path = root / name
+            if path in seen:
+                continue
+            seen.add(path)
+            if path.is_file():
+                found.append(path)
+    return found
+
+
+def _xseg_candidates(explicit: Path | None) -> list[Path]:
+    roots: list[Path] = []
+    if explicit is not None and explicit.is_file():
+        roots.append(explicit.parent)
+    roots.extend(
+        [
+            models_dir() / "vision",
+            models_dir(),
+            cache_home() / "vision",
+            Path(__file__).resolve().parents[2] / "models" / "vision",
+        ]
+    )
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        for name in _XSEG_NAMES:
             path = root / name
             if path in seen:
                 continue
@@ -317,6 +371,76 @@ class _BiseNetSession:
         return pred
 
 
+class _XSegSession:
+    """DeepFaceLab XSeg matte. Output is high on the face and low on foreign pixels.
+
+    This is not a hand-class model. The occluder is the skin BiSeNet kept where
+    this matte is low. A missing or unloadable file is ignored.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.session: Any = None
+        self.provider = ""
+        self.error = ""
+
+    def load(self) -> bool:
+        if self.session is not None:
+            return True
+        if self.error:
+            return False
+        ort = _ort_module()
+        if ort is None:
+            self.error = f"xseg occluder unavailable: onnxruntime is not installed ({self.path.name})"
+            return False
+        try:
+            available = list(ort.get_available_providers())
+            chosen: list[str] = []
+            if "CUDAExecutionProvider" in available:
+                chosen.append("CUDAExecutionProvider")
+            if "CPUExecutionProvider" in available:
+                chosen.append("CPUExecutionProvider")
+            if not chosen:
+                self.error = f"xseg occluder unavailable: no CPU or CUDA provider ({available})"
+                return False
+            options = ort.SessionOptions()
+            options.log_severity_level = 3
+            self.session = ort.InferenceSession(str(self.path), options, providers=chosen)
+            self.provider = str(self.session.get_providers()[0])
+            inputs = self.session.get_inputs()
+            outputs = self.session.get_outputs()
+            if not inputs or not outputs or inputs[0].name != "input" or outputs[0].name != "output":
+                self.session = None
+                self.error = f"xseg occluder unavailable: {self.path.name} is not an XSeg input/output graph"
+                return False
+            dummy = np.zeros((1, _XSEG_INPUT, _XSEG_INPUT, 3), dtype=np.float32)
+            out = self.session.run(["output"], {"input": dummy})[0]
+            if getattr(out, "ndim", 0) != 4 or int(out.shape[-1]) != 1:
+                self.session = None
+                self.error = f"xseg occluder unavailable: {self.path.name} output shape {getattr(out, 'shape', None)}"
+                return False
+        except Exception as exc:
+            self.session = None
+            self.error = f"xseg occluder unavailable: {self.path.name} could not be executed ({type(exc).__name__})"
+            return False
+        self.error = ""
+        return True
+
+    def keep_mask(self, crop_bgr: np.ndarray) -> np.ndarray:
+        import cv2
+
+        if not self.load() or self.session is None:
+            raise RuntimeError(self.error or "xseg occluder unavailable")
+        resized = cv2.resize(crop_bgr, (_XSEG_INPUT, _XSEG_INPUT), interpolation=cv2.INTER_LINEAR)
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        keep = self.session.run(["output"], {"input": rgb[None]})[0]
+        matte = np.clip(keep[0, ..., 0], 0.0, 1.0).astype(np.float32)
+        h, w = crop_bgr.shape[:2]
+        if matte.shape != (h, w):
+            matte = cv2.resize(matte, (w, h), interpolation=cv2.INTER_LINEAR)
+        return matte
+
+
 class OcclusionEngine:
     """Estimate the visible-face mask for one tracked face.
 
@@ -338,6 +462,11 @@ class OcclusionEngine:
         self._probe_detail: str | None = None
         self._backend: _BiseNetSession | None = None
         self._backend_ready = False
+        self._xseg: _XSegSession | None = None
+        self._xseg_probed = False
+        self._xseg_note = ""
+        self._xseg_hold: np.ndarray | None = None
+        self._xseg_calls = 0
 
     def status(self) -> tuple[bool, str]:
         """(parser_available, detail) for doctor. Does not claim a parse it cannot run."""
@@ -437,12 +566,77 @@ class OcclusionEngine:
         face[y:y1, x:x1] = face_roi
         occ[y:y1, x:x1] = occ_roi
         visible[y:y1, x:x1] = vis_roi
+        extra, xseg_note = self._xseg_extra(crop, labels, (x, y, x1, y1), (fh, fw))
+        if extra is not None:
+            occ = np.maximum(occ, extra)
+            visible = combine_visible_mask(face, occ)
         provider = self._backend.provider or "CPUExecutionProvider"
         detail = (
             f"BiSeNet CelebAMask-HQ on {provider}; swap classes"
             " skin/brows/eyes/nose/mouth/lips; hair/cloth/background stay target"
         )
+        if xseg_note:
+            detail = f"{detail}; {xseg_note}"
         return face, occ, visible, detail
+
+    def _note_xseg_file(self) -> None:
+        if self._xseg_note:
+            return
+        found = _xseg_candidates(self._weights_path)
+        if found:
+            self._xseg_note = f"xseg occluder file {found[0].name} (interval {XSEG_INTERVAL})"
+
+    def _xseg_extra(
+        self,
+        crop: np.ndarray,
+        labels: np.ndarray,
+        box: tuple[int, int, int, int],
+        hw: tuple[int, int],
+    ) -> tuple[np.ndarray | None, str]:
+        """Full-frame occluder from the XSeg matte, or None when it is not in use."""
+        session = self._xseg_session()
+        if session is None:
+            return None, ""
+        skin = (np.asarray(labels) == 1).astype(np.float32)
+        feature = np.isin(labels, _FEATURE_CLASS_IDS).mean() if labels.size else 0.0
+        skin_frac = float(skin.mean()) if skin.size else 0.0
+        run = xseg_should_run(self._xseg_calls, skin_frac, float(feature))
+        self._xseg_calls += 1
+        x, y, x1, y1 = box
+        if not run and self._xseg_hold is not None and self._xseg_hold.shape == hw:
+            return self._xseg_hold, f"XSeg matte held ({session.path.name}, every {XSEG_INTERVAL} frames)"
+        try:
+            keep = session.keep_mask(crop)
+        except Exception:
+            self._xseg = None
+            return None, ""
+        extra_roi = xseg_occluder_from_keep(skin, keep)
+        extra = np.zeros(hw, dtype=np.float32)
+        extra[y:y1, x:x1] = extra_roi
+        if self._xseg_hold is not None and self._xseg_hold.shape == hw:
+            # Keep holes on faces this call did not refresh.
+            stale = self._xseg_hold.copy()
+            stale[y:y1, x:x1] = 0.0
+            extra = np.maximum(extra, stale)
+        self._xseg_hold = extra
+        return extra, (
+            f"XSeg matte on {session.provider} ({session.path.name}); "
+            "skin the matte rejected is an occluder"
+        )
+
+    def _xseg_session(self) -> _XSegSession | None:
+        if self._xseg_probed:
+            return self._xseg if self._xseg is not None and self._xseg.session is not None else None
+        self._xseg_probed = True
+        found = _xseg_candidates(self._weights_path)
+        if not found:
+            return None
+        session = _XSegSession(found[0])
+        if not session.load():
+            self._xseg = None
+            return None
+        self._xseg = session
+        return session
 
     def _ensure_backend(self) -> None:
         if self._probe_detail is not None:
@@ -464,6 +658,9 @@ class OcclusionEngine:
         else:
             self._backend_ready = False
             self._probe_detail = self._backend.error or "parser unavailable"
+        self._note_xseg_file()
+        if self._xseg_note and self._probe_detail and self._xseg_note not in self._probe_detail:
+            self._probe_detail = f"{self._probe_detail}; {self._xseg_note}"
 
     @staticmethod
     def _as_frame_mask(face_mask: np.ndarray, hw: tuple[int, int]) -> np.ndarray:

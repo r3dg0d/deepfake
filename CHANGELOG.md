@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Optional cached XSeg matte (`xseg_2.onnx`) subtracts BiSeNet skin it does not accept as a face, on an interval. Missing weights keep today's BiSeNet-only mask. No SAM download.
+
 - Finished video files get a C2PA manifest (face replacement, plus frame interpolation when frame generation emitted frames) via `c2patool`, then a verify step. `deepfake provenance inspect` reports only what verified. The on-screen watermark is unchanged. SynthID is not embedded.
 
 - Visible-face masks are smoothed across frames: one empty parse keeps the last mask, a new hole closes with alpha 0.9, and the hole opens back with alpha 0.35.
