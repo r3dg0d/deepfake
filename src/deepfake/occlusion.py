@@ -1,10 +1,8 @@
 """Occlusion-aware face mask. Visible face = face region minus occluder.
 
-This slice does the mask math and a deterministic test double. It does not
-download weights. A face-parsing file under the deepfake cache is noted, but
-logits are not applied until a runtime can execute them and the class map is
-tested. Without that, ``estimate`` returns the same ellipse ``paste_face``
-already uses and reports the parser unavailable.
+The live path calls ``OcclusionEngine``. When BiSeNet cannot run, the result
+says the parser is unavailable and the composite keeps today's ellipse (the
+visible mask is not applied). Nothing is downloaded.
 """
 
 from __future__ import annotations
@@ -19,11 +17,42 @@ from .composite import _oval_soft_mask
 from .detect import FaceBox
 from .paths import cache_home, models_dir
 
-# CelebAMask-HQ ids, for a later parser. Not applied in this slice.
-FACE_PART_IDS = (1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13)  # skin through lips
-OCCLUDER_PART_IDS = (9, 14, 16, 17, 18)  # ear_r, neck, cloth, hair, hat
+# CelebAMask-HQ 19-class head used by face-parsing BiSeNet (zllrunning / the
+# usual ResNet-18 ONNX export). This file does not store a label list; the
+# order was checked on src/deepfake/assets/bench_face.jpg: hair is the top
+# band, skin is the center, cloth is the bottom, brows sit above the eyes.
+CELEBA_MASK_HQ_LABELS: tuple[str, ...] = (
+    "background",  # 0
+    "skin",  # 1
+    "l_brow",  # 2
+    "r_brow",  # 3
+    "l_eye",  # 4
+    "r_eye",  # 5
+    "eye_g",  # 6 glasses
+    "l_ear",  # 7
+    "r_ear",  # 8
+    "ear_r",  # 9 earring
+    "nose",  # 10
+    "mouth",  # 11
+    "u_lip",  # 12
+    "l_lip",  # 13
+    "neck",  # 14
+    "neck_l",  # 15 necklace
+    "cloth",  # 16
+    "hair",  # 17
+    "hat",  # 18
+)
+
+# Swap these. Everything else stays the target frame.
+SWAP_CLASS_IDS: tuple[int, ...] = (1, 2, 3, 4, 5, 10, 11, 12, 13)
+# Reported on the occluder channel. Ears, neck, and background also stay
+# target, but they are not called occluders.
+OCCLUDER_CLASS_IDS: tuple[int, ...] = (6, 9, 15, 16, 17, 18)
 
 _WEIGHT_NAMES = ("bisenet_resnet_18.onnx",)
+_INPUT = 512
+_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+_IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
 class OccluderSource(Protocol):
@@ -42,6 +71,8 @@ class OcclusionResult:
     temporal_state: Any
     parser_available: bool
     detail: str
+    # False on the ellipse fallback so paste_face is not given a second ellipse.
+    apply_to_composite: bool = False
 
 
 def combine_visible_mask(face_mask: np.ndarray, occluder_mask: np.ndarray) -> np.ndarray:
@@ -51,6 +82,20 @@ def combine_visible_mask(face_mask: np.ndarray, occluder_mask: np.ndarray) -> np
     if face.shape != occ.shape:
         raise ValueError(f"mask shape mismatch: face {face.shape} vs occluder {occ.shape}")
     return np.clip(face * (1.0 - occ), 0.0, 1.0)
+
+
+def masks_from_label_map(labels: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Map a CelebAMask-HQ label image to face, occluder, and visible masks.
+
+    Visible pixels are only skin, brows, eyes, nose, mouth, and lips.
+    Hair, cloth, glasses, hat, jewelry, background, ears, and neck stay out.
+    """
+    lab = np.asarray(labels)
+    if lab.ndim != 2:
+        raise ValueError(f"label map must be HxW, got {lab.shape}")
+    face = np.isin(lab, SWAP_CLASS_IDS).astype(np.float32)
+    occ = np.isin(lab, OCCLUDER_CLASS_IDS).astype(np.float32)
+    return face, occ, combine_visible_mask(face, occ)
 
 
 def ellipse_face_mask(frame_bgr: np.ndarray, box: FaceBox, *, feather: int = 24) -> np.ndarray:
@@ -94,7 +139,9 @@ class ColorKeyOccluder:
         return mask
 
 
-def _weight_candidates() -> list[Path]:
+def _weight_candidates(explicit: Path | None) -> list[Path]:
+    if explicit is not None:
+        return [explicit] if explicit.is_file() else []
     roots = [
         models_dir() / "vision",
         models_dir(),
@@ -114,26 +161,107 @@ def _weight_candidates() -> list[Path]:
     return found
 
 
-def _dnn_can_execute(path: Path) -> bool:
-    """True only if OpenCV DNN can both load and forward the graph.
-
-    The checked-in local BiSeNet export fails shape inference (dynamic
-    AveragePool). This probe must not download anything and must not guess
-    class ids from a tensor we have not tested.
-    """
+def _ort_module():
     try:
-        import cv2
+        import onnxruntime as ort
     except ImportError:
-        return False
-    try:
-        net = cv2.dnn.readNetFromONNX(str(path))
-        blank = np.zeros((64, 64, 3), dtype=np.uint8)
-        blob = cv2.dnn.blobFromImage(blank, scalefactor=1 / 255.0, size=(64, 64), swapRB=True)
-        net.setInput(blob)
-        out = net.forward()
-    except Exception:
-        return False
-    return isinstance(out, np.ndarray) and out.size > 0
+        return None
+    return ort
+
+
+class _BiseNetSession:
+    """Lazy onnxruntime session. CUDA if that provider is already in the build."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.session: Any = None
+        self.provider = ""
+        self.error = ""
+        self._shape_ok = False
+
+    def load(self) -> bool:
+        if self.session is not None and self._shape_ok:
+            return True
+        if self.error and self.session is None:
+            return False
+        ort = _ort_module()
+        if ort is None:
+            self.error = (
+                f"parser unavailable: {self.path.name} is installed but onnxruntime is not"
+                " (optional extra 'parse'; no download attempted)"
+            )
+            return False
+        try:
+            available = list(ort.get_available_providers())
+            chosen: list[str] = []
+            if "CUDAExecutionProvider" in available:
+                chosen.append("CUDAExecutionProvider")
+            if "CPUExecutionProvider" in available:
+                chosen.append("CPUExecutionProvider")
+            if not chosen:
+                self.error = (
+                    f"parser unavailable: onnxruntime has no CPU or CUDA provider ({available})"
+                )
+                return False
+            options = ort.SessionOptions()
+            options.log_severity_level = 3
+            self.session = ort.InferenceSession(str(self.path), options, providers=chosen)
+            self.provider = str(self.session.get_providers()[0])
+            names = [o.name for o in self.session.get_outputs()]
+            if "output" not in names:
+                self.session = None
+                self.error = (
+                    f"parser unavailable: {self.path.name} has outputs {names}, not 'output';"
+                    " not using this file"
+                )
+                return False
+        except Exception as exc:
+            self.session = None
+            self.error = (
+                f"parser unavailable: {self.path.name} could not be executed"
+                f" ({type(exc).__name__}; no download attempted)"
+            )
+            return False
+        return self._check_channels()
+
+    def _check_channels(self) -> bool:
+        try:
+            dummy = np.zeros((1, 3, _INPUT, _INPUT), dtype=np.float32)
+            out = self.session.run(["output"], {"input": dummy})[0]
+        except Exception as exc:
+            self.session = None
+            self.error = (
+                f"parser unavailable: {self.path.name} forward failed"
+                f" ({type(exc).__name__}; no download attempted)"
+            )
+            return False
+        if getattr(out, "ndim", 0) != 4 or int(out.shape[1]) != len(CELEBA_MASK_HQ_LABELS):
+            shape = getattr(out, "shape", None)
+            self.session = None
+            self.error = (
+                f"parser unavailable: {self.path.name} output shape {shape} is not"
+                f" {len(CELEBA_MASK_HQ_LABELS)}-class CelebAMask-HQ; not using this file"
+            )
+            return False
+        self._shape_ok = True
+        self.error = ""
+        return True
+
+    def labels(self, crop_bgr: np.ndarray) -> np.ndarray:
+        import cv2
+
+        if not self.load() or self.session is None:
+            raise RuntimeError(self.error or "parser unavailable")
+        resized = cv2.resize(crop_bgr, (_INPUT, _INPUT), interpolation=cv2.INTER_LINEAR)
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        norm = (rgb - _IMAGENET_MEAN) / _IMAGENET_STD
+        blob = np.transpose(norm, (2, 0, 1))[None]
+        logits = self.session.run(["output"], {"input": blob})[0]
+        pred = np.argmax(logits, axis=1)[0].astype(np.uint8)
+        h, w = crop_bgr.shape[:2]
+        if pred.shape != (h, w):
+            pred = cv2.resize(pred, (w, h), interpolation=cv2.INTER_NEAREST)
+        return pred
 
 
 class OcclusionEngine:
@@ -143,10 +271,26 @@ class OcclusionEngine:
     filter masks across frames, so tests may pass ``None``.
     """
 
-    def __init__(self, parser: OccluderSource | None = None, *, feather: int = 24) -> None:
+    def __init__(
+        self,
+        parser: OccluderSource | None = None,
+        *,
+        feather: int = 24,
+        weights_path: Path | None = None,
+    ) -> None:
         self._parser = parser
         self.feather = feather
+        self._weights_path = weights_path
         self._probe_detail: str | None = None
+        self._backend: _BiseNetSession | None = None
+        self._backend_ready = False
+
+    def status(self) -> tuple[bool, str]:
+        """(parser_available, detail) for doctor. Does not claim a parse it cannot run."""
+        if self._parser is not None:
+            return False, "deterministic test double; BiSeNet parser unavailable"
+        self._ensure_backend()
+        return self._backend_ready, self._probe_detail or "parser unavailable"
 
     def estimate(
         self,
@@ -156,63 +300,128 @@ class OcclusionEngine:
         face_mask: np.ndarray | None = None,
         temporal_state: Any = None,
     ) -> OcclusionResult:
-        del landmarks  # detectors do not fill these yet; accepted for the later pipeline
+        del landmarks  # detectors do not fill these yet
         box = face_track
-        if face_mask is None:
-            face = ellipse_face_mask(frame, box, feather=self.feather)
-        else:
-            face = np.clip(np.asarray(face_mask, dtype=np.float32), 0.0, 1.0)
-            if face.ndim == 3:
-                face = face[:, :, 0]
-            if face.shape != frame.shape[:2]:
-                raise ValueError(f"face_mask shape {face.shape} != frame {frame.shape[:2]}")
-
         if self._parser is not None:
-            occ = np.clip(np.asarray(self._parser.occluder_mask(frame, box), dtype=np.float32), 0.0, 1.0)
-            if occ.shape != face.shape:
-                raise ValueError(f"occluder shape {occ.shape} != face {face.shape}")
-            visible = combine_visible_mask(face, occ)
+            return self._from_test_double(frame, box, face_mask, temporal_state)
+        parsed = self._from_bisenet(frame, box)
+        if parsed is not None:
+            face, occ, visible, detail = parsed
             return OcclusionResult(
                 face_mask=face,
                 occluder_mask=occ,
                 visible_face_mask=visible,
-                confidence=1.0,
+                confidence=float(visible.mean()) if visible.size else 0.0,
                 temporal_state=temporal_state,
-                parser_available=False,
-                detail="deterministic test double; face parser unavailable (no model executed)",
+                parser_available=True,
+                detail=detail,
+                apply_to_composite=True,
             )
-
-        detail = self._parser_status()
+        if face_mask is None:
+            face = ellipse_face_mask(frame, box, feather=self.feather)
+        else:
+            face = self._as_frame_mask(face_mask, frame.shape[:2])
         occ = np.zeros(face.shape, dtype=np.float32)
-        # A file on disk is not a mask. Until labels are tested, keep the ellipse.
-        visible = combine_visible_mask(face, occ)
+        detail = self._probe_detail or "parser unavailable"
+        if self._backend_ready:
+            # Session is fine; this crop was empty. Do not describe that as an active parse.
+            detail = "parser unavailable: empty face crop; using ellipse"
         return OcclusionResult(
             face_mask=face,
             occluder_mask=occ,
-            visible_face_mask=visible,
+            visible_face_mask=combine_visible_mask(face, occ),
             confidence=0.0,
             temporal_state=temporal_state,
             parser_available=False,
             detail=detail,
+            apply_to_composite=False,
         )
 
-    def _parser_status(self) -> str:
+    def _from_test_double(self, frame, box, face_mask, temporal_state) -> OcclusionResult:
+        if face_mask is None:
+            face = ellipse_face_mask(frame, box, feather=self.feather)
+        else:
+            face = self._as_frame_mask(face_mask, frame.shape[:2])
+        occ = np.clip(np.asarray(self._parser.occluder_mask(frame, box), dtype=np.float32), 0.0, 1.0)
+        if occ.shape != face.shape:
+            raise ValueError(f"occluder shape {occ.shape} != face {face.shape}")
+        return OcclusionResult(
+            face_mask=face,
+            occluder_mask=occ,
+            visible_face_mask=combine_visible_mask(face, occ),
+            confidence=1.0,
+            temporal_state=temporal_state,
+            parser_available=False,
+            detail="deterministic test double; BiSeNet parser unavailable (no model executed)",
+            apply_to_composite=True,
+        )
+
+    def _from_bisenet(self, frame, box):
+        self._ensure_backend()
+        if not self._backend_ready or self._backend is None:
+            return None
+        x, y, x1, y1, crop = _clamped_crop(frame, box)
+        if crop.size == 0 or crop.shape[0] < 2 or crop.shape[1] < 2:
+            return None
+        try:
+            labels = self._backend.labels(crop)
+        except Exception as exc:
+            self._backend_ready = False
+            self._probe_detail = (
+                f"parser unavailable: {self._backend.path.name} inference failed"
+                f" ({type(exc).__name__}); using ellipse"
+            )
+            return None
+        face_roi, occ_roi, vis_roi = masks_from_label_map(labels)
+        fh, fw = frame.shape[:2]
+        face = np.zeros((fh, fw), dtype=np.float32)
+        occ = np.zeros((fh, fw), dtype=np.float32)
+        visible = np.zeros((fh, fw), dtype=np.float32)
+        face[y:y1, x:x1] = face_roi
+        occ[y:y1, x:x1] = occ_roi
+        visible[y:y1, x:x1] = vis_roi
+        provider = self._backend.provider or "CPUExecutionProvider"
+        detail = (
+            f"BiSeNet CelebAMask-HQ on {provider}; swap classes"
+            " skin/brows/eyes/nose/mouth/lips; hair/cloth/background stay target"
+        )
+        return face, occ, visible, detail
+
+    def _ensure_backend(self) -> None:
         if self._probe_detail is not None:
-            return self._probe_detail
-        found = _weight_candidates()
+            return
+        found = _weight_candidates(self._weights_path)
         if not found:
             self._probe_detail = "parser unavailable: no face-parsing weights installed"
-            return self._probe_detail
-        path = found[0]
-        if _dnn_can_execute(path):
-            # Reachable only if a future runtime forwards the graph. Class ids
-            # stay unwired on purpose: an untested map would punch the face.
+            self._backend = None
+            self._backend_ready = False
+            return
+        if self._backend is None:
+            self._backend = _BiseNetSession(found[0])
+        if self._backend.load():
+            self._backend_ready = True
             self._probe_detail = (
-                f"parser unavailable: {path.name} loaded but face-part labels are not wired"
+                f"BiSeNet {self._backend.path.name} on {self._backend.provider}"
+                " (CelebAMask-HQ 19 classes)"
             )
         else:
-            self._probe_detail = (
-                f"parser unavailable: {path.name} is installed but could not be executed"
-                " (no download attempted)"
-            )
-        return self._probe_detail
+            self._backend_ready = False
+            self._probe_detail = self._backend.error or "parser unavailable"
+
+    @staticmethod
+    def _as_frame_mask(face_mask: np.ndarray, hw: tuple[int, int]) -> np.ndarray:
+        face = np.clip(np.asarray(face_mask, dtype=np.float32), 0.0, 1.0)
+        if face.ndim == 3:
+            face = face[:, :, 0]
+        if face.shape != hw:
+            raise ValueError(f"face_mask shape {face.shape} != frame {hw}")
+        return face
+
+
+def _clamped_crop(frame: np.ndarray, box: FaceBox):
+    fh, fw = frame.shape[:2]
+    x, y = max(0, int(box.x)), max(0, int(box.y))
+    x1, y1 = min(fw, int(box.x) + int(box.w)), min(fh, int(box.y) + int(box.h))
+    if x1 <= x or y1 <= y:
+        return x, y, x1, y1, frame[0:0, 0:0]
+    return x, y, x1, y1, frame[y:y1, x:x1]

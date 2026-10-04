@@ -31,6 +31,11 @@ def run_doctor() -> list[Check]:
     af_ok = bool(af and af.installed) or (vendor_ok and weights.is_dir())
     checks.append(Check("AlphaFace", af_ok, "available" if af_ok else "not installed (deepfake models install alphaface)"))
 
+    from .occlusion import OcclusionEngine
+
+    occ_ok, occ_detail = OcclusionEngine().status()
+    checks.append(Check("Occlusion", occ_ok, occ_detail))
+
     # CUDA / GPU
     device = resolve_cuda("auto")
     cuda_ok = device.startswith("cuda")

@@ -48,6 +48,7 @@
             python.pkgs.rich
             python.pkgs.pytest
             python.pkgs.ruff
+            python.pkgs.onnxruntime # optional face-parse extra; CPU build unless CUDA EP is present
             pkgs.ffmpeg
             pkgs.v4l-utils
           ];

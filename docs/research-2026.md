@@ -15,11 +15,11 @@ Notes from reading the tree and public provenance work. Nothing in this file is 
 
 There is still no face parser on that path. `FaceBox.landmarks` is never filled. `OpenCVYuNetDetector` exists and can read a YuNet file, but `create_detector` never returns it, and its `detect` drops the landmark columns.
 
-## This commit
+## Occlusion slice
 
-Mask math only: visible face = face region minus occluder. `paste_face` intersects the ellipse with a visible-face mask when the caller passes one. With no working parser, `OcclusionEngine` returns that same ellipse and says the parser is unavailable. See `docs/architecture/occlusion.md`.
+`FaceSwapPipeline.swap_frame` calls `OcclusionEngine` for webcam, virtualcam, and video. `paste_face` intersects the ellipse with the visible-face mask only when a parser actually produced one. With no working parser the ellipse is unchanged, and doctor plus one stderr line say occlusion is inactive. See `docs/architecture/occlusion.md`.
 
-Not done here: calling the engine from `webcam` / `virtualcam` / `video` (no new flags), a live BiSeNet or SegFace, SAM2, invisible watermark embedding, or C2PA signing.
+The cached `bisenet_resnet_18.onnx` runs through optional onnxruntime (CPU on the nixpkgs build; CUDA only if that provider is already in the build). It is not downloaded. SegFace, SAM 2, invisible watermark embedding, and C2PA signing are not in this tree.
 
 ## Provenance (read, not implemented)
 
@@ -33,7 +33,7 @@ Not done here: calling the engine from `webcam` / `virtualcam` / `video` (no new
 
 Keep AlphaFace as the swap. Add a small face parser for the blend mask: BiSeNet (CelebAMask-HQ, 19 parts) or SegFace-Mobile (MobileNetV3 SegFace, AAAI 2025). Either one should produce the face region; hair, hat, glasses, and cloth become occluders. Optional later: a tiny SAM 2 for occluders the parser misses (hands, microphones). Do not take that dependency until weights are an explicit install, same rule as AlphaFace.
 
-A local `~/.cache/deepfake/models/vision/bisenet_resnet_18.onnx` (~51 MB) was already on this machine. OpenCV 4.13 DNN cannot execute that export (dynamic AveragePool shape). `onnxruntime` is not a project dependency. This commit does not download a runtime or a model, and it does not treat that file as a live parser.
+A local `~/.cache/deepfake/models/vision/bisenet_resnet_18.onnx` (~51 MB) was already on this machine. OpenCV 4.13 DNN cannot execute that export. Optional `onnxruntime` can: the graph is 19-class CelebAMask-HQ (checked on `bench_face.jpg`). The nixpkgs runtime used here exposes CPU, not CUDA. No replacement weights were fetched.
 
 ## Out of scope for this webcam slice
 

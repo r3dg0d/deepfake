@@ -120,3 +120,118 @@ def test_combine_visible_mask_subtracts_occluder():
     vis = combine_visible_mask(face, occ)
     assert vis[0].sum() == 0
     assert vis[1:].min() == 1
+
+
+def test_label_map_keeps_hair_cloth_and_background_out():
+    from deepfake.occlusion import SWAP_CLASS_IDS, masks_from_label_map
+
+    labels = np.zeros((6, 6), dtype=np.uint8)
+    labels[1:5, 1:5] = 1  # skin
+    labels[0, :] = 17  # hair
+    labels[5, :] = 16  # cloth
+    labels[3, 3] = 0  # background hole inside the face
+    labels[2, 2] = 6  # glasses
+    _face, occ, vis = masks_from_label_map(labels)
+    assert vis[0].max() == 0.0
+    assert vis[5].max() == 0.0
+    assert vis[3, 3] == 0.0
+    assert vis[2, 2] == 0.0
+    assert occ[0, 0] == 1.0 and occ[5, 0] == 1.0 and occ[2, 2] == 1.0
+    assert vis[1, 1] == 1.0
+    assert 17 not in SWAP_CLASS_IDS and 16 not in SWAP_CLASS_IDS and 0 not in SWAP_CLASS_IDS
+    assert set(SWAP_CLASS_IDS) == {1, 2, 3, 4, 5, 10, 11, 12, 13}
+
+
+def test_pipeline_passes_visible_mask_from_mocked_parser(monkeypatch):
+    from deepfake.occlusion import OcclusionEngine
+    from deepfake.pipeline import FaceSwapPipeline, build_config
+
+    class Strip:
+        def occluder_mask(self, frame, box):
+            mask = np.zeros(frame.shape[:2], dtype=np.float32)
+            y0 = int(box.y) + 8
+            mask[y0 : y0 + 6, int(box.x) : int(box.x) + int(box.w)] = 1.0
+            return mask
+
+    seen: dict = {}
+
+    def spy(frame, face, box, **kwargs):
+        seen["visible"] = kwargs.get("visible_mask")
+        seen["box"] = box
+        return paste_face(frame, face, box, **kwargs)
+
+    monkeypatch.setattr("deepfake.pipeline.paste_face", spy)
+
+    class Det:
+        def detect(self, frame):
+            return [FaceBox(20, 20, 80, 80)]
+
+    monkeypatch.setattr("deepfake.pipeline.create_detector", lambda prefer="auto": Det())
+    pipe = FaceSwapPipeline(build_config("low-latency", allow_passthrough=True))
+    pipe.occlusion = OcclusionEngine(parser=Strip())
+    pipe.set_source(np.zeros((32, 32, 3), dtype=np.uint8))
+    pipe.swap_frame(np.full((160, 180, 3), 90, dtype=np.uint8))
+    vis = seen["visible"]
+    box = seen["box"]
+    assert vis is not None
+    y0 = int(box.y) + 8
+    assert vis[y0 : y0 + 6, int(box.x) : int(box.x) + int(box.w)].max() == 0.0
+    assert vis[int(box.y) + 30 : int(box.y) + 50, int(box.x) + 20 : int(box.x) + 40].mean() > 0.2
+
+
+def test_pipeline_keeps_ellipse_when_parser_unavailable(monkeypatch, capsys):
+    from deepfake.pipeline import FaceSwapPipeline, build_config
+
+    seen: dict = {}
+
+    def spy(frame, face, box, **kwargs):
+        seen["visible"] = kwargs.get("visible_mask")
+        return paste_face(frame, face, box, **kwargs)
+
+    monkeypatch.setattr("deepfake.pipeline.paste_face", spy)
+
+    class Det:
+        def detect(self, frame):
+            return [FaceBox(20, 20, 80, 80)]
+
+    monkeypatch.setattr("deepfake.pipeline.create_detector", lambda prefer="auto": Det())
+    pipe = FaceSwapPipeline(build_config("low-latency", allow_passthrough=True))
+    pipe.set_source(np.zeros((32, 32, 3), dtype=np.uint8))
+    pipe.swap_frame(np.full((160, 180, 3), 90, dtype=np.uint8))
+    assert seen["visible"] is None
+    err = capsys.readouterr().err
+    assert "occlusion: inactive" in err
+    assert "parser unavailable" in err
+    assert "occlusion: active" not in err
+
+
+def test_bisenet_parses_bench_face_on_cpu():
+    pytest = __import__("pytest")
+    pytest.importorskip("onnxruntime")
+    from pathlib import Path
+
+    import cv2
+
+    weight = Path.home() / ".cache/deepfake/models/vision/bisenet_resnet_18.onnx"
+    if not weight.is_file():
+        pytest.skip("cached bisenet weight is not on this machine")
+    image = Path(__file__).resolve().parents[1] / "src/deepfake/assets/bench_face.jpg"
+    frame = cv2.imread(str(image), cv2.IMREAD_COLOR)
+    assert frame is not None
+    h, w = frame.shape[:2]
+    engine = OcclusionEngine(weights_path=weight)
+    est = engine.estimate(frame, FaceBox(0, 0, w, h), None, None, None)
+    assert est.parser_available is True
+    assert est.apply_to_composite is True
+    assert "CelebAMask-HQ" in est.detail
+    assert "CPUExecutionProvider" in est.detail or "CUDAExecutionProvider" in est.detail
+    # Top of this portrait is background/hair, not a swap class.
+    assert est.visible_face_mask[: h // 10].mean() < 0.05
+    # Mid-face has skin.
+    assert est.visible_face_mask[h // 3 : h // 2, w // 4 : 3 * w // 4].mean() > 0.2
+    # Upper-face occluders (hair on this portrait) are outside the swap mask.
+    band = est.occluder_mask[h // 6 : h // 4, w // 3 : 2 * w // 3]
+    assert band.mean() > 0.3
+    blocked = est.visible_face_mask[est.occluder_mask > 0.5]
+    assert blocked.size > 0
+    assert blocked.max() == 0.0

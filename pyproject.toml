@@ -30,6 +30,8 @@ dependencies = [
 dev = ["pytest>=8.0", "ruff>=0.6"]
 cuda = []  # torch/cuda installed by user for AlphaFace; not forced
 insightface = ["insightface>=0.7", "onnxruntime>=1.16"]
+# Face-part mask. Weights are not downloaded; point the cache at an existing ONNX.
+parse = ["onnxruntime>=1.16"]
 gdown = ["gdown>=5.0"]
 # Frame generation uses NVIDIA Optical Flow (driver) + torch CUDA.
 framegen = ["nvidia-ml-py>=12"]

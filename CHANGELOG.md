@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Live and offline swap now ask OcclusionEngine for a visible-face mask. BiSeNet runs through optional onnxruntime when `bisenet_resnet_18.onnx` is already cached and the graph is 19-class CelebAMask-HQ; otherwise the ellipse is unchanged and doctor/stderr say occlusion is inactive.
 - Occlusion mask math: visible face = face region minus occluder, and `paste_face` can intersect the ellipse with that mask. No parser runs yet; without executing weights the engine keeps the ellipse and reports the parser unavailable. `webcam` / `virtualcam` / `video` gain no flags.
 
 ### Security

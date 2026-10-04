@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ import numpy as np
 from .composite import paste_face
 from .detect import FaceBox, FaceDetector, align_crop, create_detector
 from .metrics import MetricsTracker, format_metrics
+from .occlusion import OcclusionEngine, OcclusionResult
 from .presets import Preset, get_preset
 from .swap.base import Swapper
 from .swap.factory import create_swapper
@@ -56,9 +58,12 @@ class FaceSwapPipeline:
             from .detect import AsyncDetector
 
             self._async = AsyncDetector(self.detector)
+        self.occlusion = OcclusionEngine()
         self._prev_faces: dict[int, np.ndarray] = {}
         self._prev_boxes: dict[int, FaceBox] = {}
         self._alpha: dict[int, float] = {}
+        self._occ_state: dict[int, Any] = {}
+        self._occlusion_logged = False
         self._frame_i = 0
 
     def set_source(self, source_bgr: np.ndarray) -> None:
@@ -127,6 +132,15 @@ class FaceSwapPipeline:
                     self._alpha[i] = alpha
                 else:  # reused box: it can't show motion, keep the last measured weight
                     alpha = self._alpha.get(i, 0.0)
+                est = self.occlusion.estimate(
+                    frame_bgr,
+                    paste_box,
+                    box.landmarks,
+                    None,
+                    self._occ_state.get(i),
+                )
+                self._occ_state[i] = est.temporal_state
+                self._note_occlusion(est)
                 out = paste_face(
                     out,
                     result.face_bgr,
@@ -135,6 +149,7 @@ class FaceSwapPipeline:
                     color_match=color,
                     temporal_prev=prev,
                     temporal_smooth=alpha,
+                    visible_mask=est.visible_face_mask if est.apply_to_composite else None,
                 )
                 self._prev_faces[i] = result.face_bgr
                 self._prev_boxes[i] = box
@@ -143,6 +158,17 @@ class FaceSwapPipeline:
         m = self.metrics.record(inference_ms=infer_ms, total_ms=total_ms)
         self._frame_i += 1
         return out, m
+
+
+    def _note_occlusion(self, est: OcclusionResult) -> None:
+        """One line on stderr. Never claims the parser is active when it is not."""
+        if self._occlusion_logged:
+            return
+        self._occlusion_logged = True
+        if est.parser_available and est.apply_to_composite:
+            print(f"occlusion: active — {est.detail}", file=sys.stderr)
+        else:
+            print(f"occlusion: inactive — {est.detail}", file=sys.stderr)
 
 
 def motion_scaled_smoothing(smooth: float, prev: FaceBox | None, cur: FaceBox, full_at: float = 0.04) -> float:
