@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Occlusion mask math: visible face = face region minus occluder, and `paste_face` can intersect the ellipse with that mask. No parser runs yet; without executing weights the engine keeps the ellipse and reports the parser unavailable. `webcam` / `virtualcam` / `video` gain no flags.
+
 ### Security
 - The AlphaFace checkpoint is now loaded with `torch.load(..., weights_only=True)`, like the
   other checkpoints, so a tampered `.pt` cannot execute code when unpickled. Verified against
