@@ -53,7 +53,7 @@ PRESETS: dict[str, Preset] = {
         temporal_smooth=0.55,
         blend_feather=36,
         color_match=True,
-        multi_face=True,
+        multi_face=False,
     ),
 }
 

@@ -80,7 +80,7 @@ class OpenCVYuNetDetector(FaceDetector):
         # Without a model file, fall back is caller's job.
         if not model_path:
             raise RuntimeError("YuNet requires a model path")
-        self._det = cv2.FaceDetectorYN.create(model_path, "", (320, 320))
+        self._det = cv2.FaceDetectorYN.create(model_path, "", (320, 320), score_threshold=0.6)
 
     def detect(self, frame_bgr: np.ndarray) -> list[FaceBox]:
         h, w = frame_bgr.shape[:2]

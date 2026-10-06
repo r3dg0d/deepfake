@@ -631,6 +631,25 @@ def help_cmd(ctx: click.Context, command: str | None):
         click.echo(main.get_help(parent))
 
 
+@main.command("compare", hidden=True)
+@click.option("--original", type=click.Path(path_type=Path, exists=True), required=True)
+@click.option("--before", type=click.Path(path_type=Path, exists=True), required=True)
+@click.option("--after", type=click.Path(path_type=Path, exists=True), required=True)
+@click.option("-o", "--output", type=click.Path(path_type=Path), required=True)
+def compare_cmd(original: Path, before: Path, after: Path, output: Path):
+    """Render local development clips and recomputed source-mask diagnostics."""
+    from .compare import render_comparison
+    from .provenance import available, sign_export
+
+    try:
+        result = render_comparison(original, before, after, output)
+        if available():
+            result["provenance"] = sign_export(output, original=original, backend="development comparison")
+    except Exception as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(json.dumps(result, indent=2))
+
+
 @main.group("provenance")
 def provenance_cmd():
     """Verify signed AI modification disclosure in exported media."""

@@ -123,7 +123,17 @@ def paste_face(
         color_match_lab(sample_src, sample_ref, mask=sample_mask, state=state, smooth=temporal_smooth)
         if state.gain is not None:
             lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB).astype(np.float32)
-            lab = np.clip(lab * state.gain + state.offset, 0, 255).astype(np.uint8)
+            lab = np.clip(lab * state.gain + state.offset, 0, 255)
+            # Retain scene chroma on partly saturated profiles where global
+            # statistics alone introduce cyan/magenta casts.
+            target_lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
+            interior = mask2d > 0.55
+            if np.count_nonzero(interior) >= 64:
+                target_lab[~interior] = target_lab[interior].mean(0)
+                radius = max(1, round(min(w, h) / 40))
+                local = cv2.GaussianBlur(target_lab, (2 * radius + 1, 2 * radius + 1), 0)
+                lab[:, :, 1:] = 0.3 * lab[:, :, 1:] + 0.7 * local[:, :, 1:]
+            lab = lab.astype(np.uint8)
             resized = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
     if temporal_prev is not None and temporal_smooth > 0:

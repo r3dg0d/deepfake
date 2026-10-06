@@ -36,6 +36,9 @@ def test_parse_frame_gen_rejects(bad):
 
 def test_factor_for_and_output_fps():
     assert factor_for(60, 30) == 2
+    assert factor_for(60, 29.9992) == 2
+    assert factor_for(60, 30000 / 1001) == 2
+    assert factor_for(60, 25) == 3
     assert factor_for(60, 24) == 3
     assert factor_for(120, 30) == 4
     assert FrameGenSettings(enabled=True, factor=3).resolve_output_fps(20) == 60

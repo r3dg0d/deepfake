@@ -23,3 +23,16 @@ def test_no_stale_track_after_detector_loss():
     tracker.update(frame, [])
     assert tracker.update(frame, []) == []
     assert tracker.update(frame, [FaceBox(15, 15, 60, 60)])[0].track_id == 2
+
+
+def test_yunet_profile_threshold(monkeypatch):
+    from types import SimpleNamespace
+
+    import cv2
+
+    from deepfake.detect import OpenCVYuNetDetector
+
+    calls = []
+    monkeypatch.setattr(cv2, "FaceDetectorYN", SimpleNamespace(create=lambda *a, **kw: calls.append(kw) or object()))
+    OpenCVYuNetDetector("test.onnx")
+    assert calls == [{"score_threshold": 0.6}]

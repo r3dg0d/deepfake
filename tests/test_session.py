@@ -33,3 +33,18 @@ def test_no_frame_gen_flag():
     )
     assert isinstance(fg, FrameGenSettings)
     assert fg.enabled is False
+
+
+def test_auto_recomputes_stale_heuristic_for_source_timing(monkeypatch):
+    import time
+
+    from deepfake import session
+
+    monkeypatch.setattr(
+        session, "load_framegen_cache", lambda: {"mode": "3x", "reason": "heuristic", "ts": time.time()}
+    )
+    saved = []
+    monkeypatch.setattr(session, "save_framegen_cache", saved.append)
+    settings = session._resolve_auto(FrameGenSettings(), source_fps=29.9992, force_bench=False, progress=None)
+    assert settings.factor == 2
+    assert saved[0]["mode"] == "2x"

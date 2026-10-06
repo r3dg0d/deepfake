@@ -59,7 +59,13 @@ def parse_frame_gen(value: str | None) -> tuple[bool, int | None]:
 def factor_for(output_fps: float, source_fps: float) -> int:
     if source_fps <= 0:
         raise ValueError("source_fps must be > 0")
-    return max(1, min(4, math.ceil(output_fps / source_fps - 1e-6)))
+    ratio = output_fps / source_fps
+    nearest = round(ratio)
+    # Container timing and NTSC rates can make 60/29.999 or 60/29.97 just
+    # exceed two. Do not select an entire extra interpolation pass for that.
+    if nearest >= 1 and math.isclose(ratio, nearest, rel_tol=0.002):
+        ratio = float(nearest)
+    return max(1, min(4, math.ceil(ratio)))
 
 
 PRESET_FRAME_GEN: dict[str, dict[str, object]] = {
