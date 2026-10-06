@@ -1,6 +1,8 @@
 # NixOS runtime
 
-`nix build` builds the Python 3.12 CPU package, includes Pillow, ONNX Runtime, ONNX and packaged Quickshell assets, and runs pytest. `nix develop` includes FFmpeg, OpenSSL, V4L2 tools, Ruff and pytest. Quickshell itself must be present on PATH (`qs`). GPU workloads need a matching CUDA PyTorch/ONNX environment; the CPU flake does not pretend to ship a working CUDA model stack.
+`nix build` builds the Python 3.12 CPU package, includes Pillow, ONNX Runtime, ONNX and packaged Quickshell assets, and runs pytest. The Linux CPU ONNX Runtime 1.22.0 wheels are fetched from official PyPI with pinned SHA-256 hashes and patched to Nix shared-library paths. This matches the validated runtime family and avoids a large C++ source build. The x86_64 package is validated locally; aarch64 uses its separately pinned official wheel but was not run on this workstation.
+
+`nix develop` includes FFmpeg, OpenSSL, V4L2 tools, Ruff and pytest. Quickshell itself must be present on PATH (`qs`). GPU workloads need a matching CUDA PyTorch/ONNX environment; the CPU flake does not pretend to ship a working CUDA model stack.
 
 `nix develop .#cuda` adds the host NVIDIA driver and Nix shared-library paths for isolated binary wheels; it does not download CUDA models or globally install Python packages.
 
