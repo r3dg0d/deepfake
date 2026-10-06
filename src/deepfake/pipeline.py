@@ -171,7 +171,9 @@ class FaceSwapPipeline:
             "occlusion_status": "; ".join(statuses) if statuses else "no face",
             "tracking_status": "locked" if selected else "searching",
             "track_ids": [t.track_id for t in selected],
-            "parser_refresh_interval": self.occlusion.parser_interval,
+            "parser_refresh_interval": (
+                1 if hasattr(self.occlusion.models, "parse_details") else self.occlusion.parser_interval
+            ),
             "pose_measurement": "5-point nose/eye yaw proxy; not degrees"
             if selected and selected[0].box.landmarks is not None
             else "unavailable",

@@ -129,11 +129,19 @@ def paste_face(
             target_lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
             interior = mask2d > 0.55
             if np.count_nonzero(interior) >= 64:
-                target_lab[~interior] = target_lab[interior].mean(0)
                 radius = max(1, round(min(w, h) / 40))
-                local = cv2.GaussianBlur(target_lab, (2 * radius + 1, 2 * radius + 1), 0)
-                lab[:, :, 1:] = 0.3 * lab[:, :, 1:] + 0.7 * local[:, :, 1:]
-            lab = lab.astype(np.uint8)
+                kernel = (2 * radius + 1, 2 * radius + 1)
+                # Hidden mouths/objects contribute no color to local statistics.
+                weight = interior.astype(np.float32)
+                denominator = cv2.GaussianBlur(weight, kernel, 0)[..., None]
+                local = cv2.GaussianBlur(target_lab * weight[..., None], kernel, 0)
+                local = np.divide(local, denominator, out=target_lab.copy(), where=denominator > 1e-6)
+                donor_local = cv2.GaussianBlur(lab * weight[..., None], kernel, 0)
+                donor_local = np.divide(donor_local, denominator, out=lab.copy(), where=denominator > 1e-6)
+                # Bounded low-frequency lighting transfer retains donor detail.
+                lab[:, :, 0] += 0.65 * np.clip(local[:, :, 0] - donor_local[:, :, 0], -32, 32)
+                lab[:, :, 1:] = 0.15 * lab[:, :, 1:] + 0.85 * local[:, :, 1:]
+            lab = np.clip(lab, 0, 255).astype(np.uint8)
             resized = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
     if temporal_prev is not None and temporal_smooth > 0:

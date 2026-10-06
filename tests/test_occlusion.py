@@ -108,3 +108,58 @@ def test_uncertain_track_blocks_swap_and_generated_face_visibility(monkeypatch):
     assert not context[1].any()
     assert context[2].any()
     assert "uncertain track" in pipe.stage_stats["occlusion_status"]
+
+
+def test_inward_feather_is_continuous_and_never_extends_support():
+    class Face(ColorOccluder):
+        def parse(self, crop):
+            mask = np.zeros(crop.shape[:2], np.float32)
+            mask[16:112, 16:112] = 1
+            return mask, 0.95
+
+    e = OcclusionEngine(models=Face()).estimate(np.full((128, 128, 3), 100, np.uint8))
+    scan = e.visible_mask[64]
+    assert not scan[:18].any()
+    assert 0 < scan[18] < 0.2
+    assert np.max(np.abs(np.diff(scan))) < 0.4
+    assert scan[64] == 1
+
+
+def test_current_mouth_preserved_during_opening_and_foreground_crossing():
+    class Talking(ColorOccluder):
+        calls = 0
+
+        def parse_details(self, crop):
+            self.calls += 1
+            mouth = np.zeros(crop.shape[:2], np.float32)
+            # Larger opening on the second frame despite a tiny global change.
+            mouth[65 : 65 + int(crop[0, 0, 0]), 45:85] = 1
+            return np.ones_like(mouth), 0.95, mouth
+
+    model = Talking()
+    engine = OcclusionEngine(models=model, parser_interval=10)
+    target = np.full((128, 128, 3), 100, np.uint8)
+    target[0, 0] = 2
+    first = engine.estimate(target)
+    target[0, 0] = 20
+    target[40:90, 70:90] = (20, 20, 240)
+    opened = engine.estimate(target, temporal_state=first.temporal_state)
+    output = paste_face(
+        target, np.full_like(target, 220), FaceBox(0, 0, 128, 128), color_match=False, visible_mask=opened.visible_mask
+    )
+    assert model.calls == 2
+    assert np.array_equal(output[65:85, 45:85], target[65:85, 45:85])
+    assert np.array_equal(output[40:90, 70:90], target[40:90, 70:90])
+    assert opened.visible_mask[30, 30] > 0.8
+    assert 0 < opened.visible_mask[75, 43] < 0.3
+
+
+def test_invalid_mouth_fails_closed():
+    class Broken(ColorOccluder):
+        def parse_details(self, crop):
+            face, confidence = self.parse(crop)
+            return face, confidence, np.full_like(face, np.nan)
+
+    estimate = OcclusionEngine(models=Broken()).estimate(np.zeros((64, 64, 3), np.uint8))
+    assert not estimate.visible_mask.any()
+    assert "failed" in estimate.status

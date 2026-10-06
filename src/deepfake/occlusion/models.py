@@ -41,6 +41,11 @@ class SemanticMasks:
         self.std = np.array([0.229, 0.224, 0.225], np.float32)
 
     def parse(self, crop: np.ndarray) -> tuple[np.ndarray, float]:
+        face, confidence, _ = self.parse_details(crop)
+        return face, confidence
+
+    def parse_details(self, crop: np.ndarray) -> tuple[np.ndarray, float, np.ndarray]:
+        """Face support and current target mouth/lips, from the same inference."""
         import cv2
 
         rgb = cv2.resize(crop, (512, 512))[:, :, ::-1].astype(np.float32) / 255
@@ -70,14 +75,21 @@ class SemanticMasks:
             confidence_map = self._logits.softmax(1).amax(1)
             confidence = float(confidence_map[face].mean().item()) if bool(face.any()) else 0.0
             mask = F.interpolate(face[:, None].float(), size=crop.shape[:2], mode="nearest")
-            return mask[0, 0].cpu().numpy(), confidence
+            mouth = (labels == 11) | (labels == 12) | (labels == 13)
+            mouth = F.interpolate(mouth[:, None].float(), size=crop.shape[:2], mode="nearest")
+            return mask[0, 0].cpu().numpy(), confidence, mouth[0, 0].cpu().numpy()
         logits = self.parser.run([self.parser.get_outputs()[0].name], {self.parser.get_inputs()[0].name: inp})[0][0]
         labels = logits.argmax(0)
         shifted = logits - logits.max(0)
         certainty = 1 / np.exp(shifted).sum(0)
         face = np.isin(labels, FACE_CLASSES)
         confidence = float(certainty[face].mean()) if face.any() else 0.0
-        return cv2.resize(face.astype(np.float32), crop.shape[1::-1]), confidence
+        mouth = np.isin(labels, (11, 12, 13))
+        return (
+            cv2.resize(face.astype(np.float32), crop.shape[1::-1], interpolation=cv2.INTER_NEAREST),
+            confidence,
+            cv2.resize(mouth.astype(np.float32), crop.shape[1::-1], interpolation=cv2.INTER_NEAREST),
+        )
 
     def visible(self, crop: np.ndarray) -> np.ndarray:
         import cv2
