@@ -18,7 +18,7 @@ deepfake video -i input.mp4 -f face.png -o output.mp4 --visible-watermark
 deepfake provenance inspect output.mp4
 ```
 
-`auto` signs when `[provenance]` is installed and optionally adds TrustMark when its package and verified assets are available. `c2pa+watermark` requires both, otherwise fails with installation instructions. Without C2PA, automatic mode retains visible disclosure. Webcam/virtual-camera pixel streams retain visible disclosure because they cannot carry the exported file's manifest. There is no new `--strip-provenance` feature; legacy hidden watermark toggles do not disable these disclosure rules.
+`auto` signs when `[provenance]` is installed and optionally adds TrustMark when its package and verified assets are available. `c2pa+watermark` requires both, otherwise fails with installation instructions. Without C2PA, automatic mode retains visible disclosure. Webcam preview retains visible disclosure. Virtualcam starts without a corner label; `--visible-watermark` opts in. Raw virtual-camera frames do not carry a file-level C2PA manifest. There is no new `--strip-provenance` feature; legacy hidden watermark toggles do not disable these disclosure rules.
 
 ## Signatures and trust are separate
 

@@ -316,9 +316,13 @@ class V4L2LoopbackSink:
         if self._proc.stdin:
             self._proc.stdin.close()
         try:
-            self._proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
+            code = self._proc.wait(timeout=10)
+        except subprocess.TimeoutExpired as exc:
             self._proc.kill()
+            self._proc.wait(timeout=5)
+            raise RuntimeError(f"virtual camera writer timed out for {self._device}") from exc
+        if code != 0:
+            raise RuntimeError(f"virtual camera writer failed for {self._device} (ffmpeg exit {code})")
 
 
 class FFmpegVideoSink:

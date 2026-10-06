@@ -3,8 +3,7 @@
 The notice is shown the first time deepfake runs interactively; once
 accepted it is remembered in ``$XDG_CONFIG_HOME/deepfake/consent.json`` and
 never asked again. Scripts can pre-accept with ``DEEPFAKE_CONSENT_ACK=1`` or
-the (hidden) ``--consent-ack`` flag. The disclosure watermark stays on by
-default either way.
+the (hidden) ``--consent-ack`` flag. Virtualcam starts without a visible label; webcam preview retains it by default.
 """
 
 from __future__ import annotations
@@ -22,8 +21,9 @@ and demos with people who have agreed to it.
 
 Only use faces and footage you have consent for (or own the rights to), and
 disclose synthetic media where law or platform rules require it. Impersonation,
-fraud, harassment and non-consensual deepfakes are prohibited. A
-Live output carries visible disclosure. File exports prefer verified C2PA
+fraud, harassment and non-consensual deepfakes are prohibited.
+Virtualcam visible disclosure is optional (--visible-watermark).
+Webcam preview carries a visible label. File exports prefer verified C2PA
 Content Credentials, with optional TrustMark disclosure watermark.
 """
 

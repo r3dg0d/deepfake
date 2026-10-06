@@ -292,7 +292,7 @@ def _widget_flag(kwargs: dict) -> bool | None:
 
 def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
     """Webcam / virtualcam: session + FrameGen auto + Quickshell."""
-    cfg.watermark = True  # live raw frames cannot carry file-level C2PA
+    cfg.watermark = mode != "virtualcam" or bool(kwargs.get("visible_watermark"))
     from .realtime import run_realtime
 
     session = DeepfakeSession(
@@ -303,42 +303,42 @@ def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
         resolution=(cfg.preset.width, cfg.preset.height),
         widget=_widget_flag(kwargs),
     )
-    session.start()
-    fg = _fg_from_kwargs(kwargs, float(cfg.preset.fps))
-    # Probe FrameGen early so we can fall back without aborting the session.
-    if fg.enabled:
-        fg, _backend, warn = try_init_framegen(fg, cfg.preset.width, cfg.preset.height)
-        if _backend is not None:
-            try:
-                _backend.shutdown()
-            except Exception:
-                pass
-        session.apply_frame_gen(fg, warning=warn)
-    else:
-        session.apply_frame_gen(fg)
-
-    out_fps = fg.resolve_output_fps(cfg.preset.fps) if fg.enabled else float(cfg.preset.fps)
-    quiet = mode == "virtualcam"
-    if not quiet:
-        click.echo(
-            f"deepfake: {cfg.preset.width}x{cfg.preset.height} · camera {cfg.preset.fps} fps · "
-            f"swap {cfg.swap_precision} · frame-gen {fg.describe()}"
-            + (f" · output {out_fps:g} fps" if fg.enabled else ""),
-            err=True,
-        )
-    sink = _make_sink(kwargs, cfg, fps=out_fps)
-    cap = _parse_input_device(kwargs.get("input_device"), 0)
-    session.mark_running()
-    if quiet:
-        click.echo(f"Virtual camera started on {kwargs.get('output_device')}")
-
-    def on_stats(snap):
-        session.publish_stats(snap)
-        if session.stop_requested():
-            raise KeyboardInterrupt
-
-    print_stats = bool(kwargs.get("show_metrics", True))
     try:
+        session.start()
+        fg = _fg_from_kwargs(kwargs, float(cfg.preset.fps))
+        # Probe FrameGen early so we can fall back without aborting the session.
+        if fg.enabled:
+            fg, _backend, warn = try_init_framegen(fg, cfg.preset.width, cfg.preset.height)
+            if _backend is not None:
+                try:
+                    _backend.shutdown()
+                except Exception:
+                    pass
+            session.apply_frame_gen(fg, warning=warn)
+        else:
+            session.apply_frame_gen(fg)
+
+        out_fps = fg.resolve_output_fps(cfg.preset.fps) if fg.enabled else float(cfg.preset.fps)
+        quiet = mode == "virtualcam"
+        if not quiet:
+            click.echo(
+                f"deepfake: {cfg.preset.width}x{cfg.preset.height} · camera {cfg.preset.fps} fps · "
+                f"swap {cfg.swap_precision} · frame-gen {fg.describe()}"
+                + (f" · output {out_fps:g} fps" if fg.enabled else ""),
+                err=True,
+            )
+        sink = _make_sink(kwargs, cfg, fps=out_fps)
+        cap = _parse_input_device(kwargs.get("input_device"), 0)
+        session.mark_running()
+        if quiet:
+            click.echo(f"Virtual camera started on {kwargs.get('output_device')}")
+
+        def on_stats(snap):
+            session.publish_stats(snap)
+            if session.stop_requested():
+                raise KeyboardInterrupt
+
+        print_stats = bool(kwargs.get("show_metrics", True))
         final = run_realtime(
             cap,
             source,
@@ -349,12 +349,13 @@ def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
             print_stats=print_stats,
             on_stats=on_stats,
         )
+        session.publish_stats(final)
+        if not quiet:
+            click.echo("final: " + json.dumps(final), err=True)
     except KeyboardInterrupt:
         return
     finally:
         session.close()
-    if not quiet:
-        click.echo("final: " + json.dumps(final), err=True)
 
 
 def _parse_input_device(raw: str | None, default: int = 0):

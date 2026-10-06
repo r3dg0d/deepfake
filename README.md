@@ -51,6 +51,8 @@ deepfake models list
 deepfake config show
 ```
 
+Virtualcam outputs clean frames by default; add `--visible-watermark` to show the corner label. Webcam preview keeps its default label.
+
 `--frame-gen off`, `--no-widget`, `--no-preview`, and `--output-fps 60` remain available. Video processing preserves the input dimensions and native frame rate when FrameGen is disabled, muxes original audio, fills the final frame interval and never overwrites the input. Processing can take longer than playback in quality mode. A first-run consent notice is remembered; scripts can acknowledge it with `DEEPFAKE_CONSENT_ACK=1`.
 
 | Preset | Intended use | Detection / parsing |
@@ -87,7 +89,7 @@ The 126-frame stylized benchmark had zero foreground leakage across hand, hair, 
 
 ## Provenance and disclosure
 
-C2PA signing occurs **after encoding** and validates the actual file's signature and video binding before publication to the requested output path. A local development signer is cryptographically valid but **not publicly trusted**. To use an external signer, configure `DEEPFAKE_C2PA_CERT` and `DEEPFAKE_C2PA_KEY`. `--visible-watermark` adds visible disclosure; when C2PA dependencies are absent, visible disclosure remains mandatory automatically.
+C2PA signing occurs **after encoding** and validates the actual file's signature and video binding before publication to the requested output path. A local development signer is cryptographically valid but **not publicly trusted**. To use an external signer, configure `DEEPFAKE_C2PA_CERT` and `DEEPFAKE_C2PA_KEY`. `--visible-watermark` adds visible disclosure; when C2PA dependencies are absent, video-file exports retain visible disclosure automatically.
 
 TrustMark Q is an optional, MIT-licensed image watermark applied per frame, using the public disclosure payload `DFv1AI`. It is **not SynthID**, an authentication signature, or guaranteed to survive every edit. In our short fixture, H.264/AV1, cropping, frame-rate conversion and metadata remux retained detections; aggressive 300 kbps compression failed. Ordinary transcoding/remux removed C2PA. Neither mechanism guarantees that X or another service will display an AI label. [Signing, trust, stress results and platform limits](docs/provenance.md).
 

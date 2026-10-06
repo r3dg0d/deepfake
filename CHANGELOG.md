@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1rc2 — 2026-10-05
+
+- Virtualcam starts without the synthetic-demo corner label. `--visible-watermark` adds it explicitly.
+- Close the live session/widget when sink initialization fails.
+- Report failed/timed-out virtual-camera FFmpeg writers instead of silently treating shutdown as successful.
+- Publish final live metrics before shutting down, including short headless virtualcam runs.
+
+
 ## 0.5.1rc1 — 2026-10-05
 
 - Detect lower-confidence foreground profiles with YuNet (0.6 threshold); quality mode selects the largest face unless `--multi-face` is requested.
