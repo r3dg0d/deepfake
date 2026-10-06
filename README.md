@@ -61,6 +61,8 @@ Virtualcam outputs clean frames by default; add `--visible-watermark` to show th
 | `balanced` | 960×540, 24 FPS camera; color matching | detector/parser every second frame; XSeg every frame |
 | `quality` | offline default; original input dimensions | detector and parser every frame; largest face by default (`--multi-face` opt-in); color matching; bidirectional FrameGen flow |
 
+Current-frame target-mouth protection preserves articulation, lips and teeth while smooth inward mask feathering protects occluders. This keeps target lip anatomy rather than transferring source lips. September 2026 shadow-harmonisation and RefGAP operators are implemented as disabled numerical research prototypes, with no claimed diffusion inference.
+
 There is no claimed diffusion `cinematic` backend in this release. [VFace, DynamicFace and LivingSwap research](docs/research-2026.md) explains their availability and why an unvalidated alias would be misleading. No face-restoration model silently changes the identity.
 
 ## How foreground is preserved
@@ -105,7 +107,7 @@ python -m build
 pytest -m gpu
 ```
 
-The wrapper is MIT; upstream components retain their own licenses. No model weights, signing keys or private test footage are packaged. [NOTICE](NOTICE), [research matrix through October 1, 2026](docs/research-2026.md), [FrameGen design](docs/frame-generation.md), [changelog](CHANGELOG.md).
+The wrapper is MIT; upstream components retain their own licenses. No model weights, signing keys or private test footage are packaged. [NOTICE](NOTICE), [research matrix through October 6, 2026](docs/research-2026.md), [FrameGen design](docs/frame-generation.md), [changelog](CHANGELOG.md).
 
 AlphaFace: [official code](https://github.com/andrewyu90/Alphaface_Official), [paper](https://arxiv.org/abs/2601.16429).
 

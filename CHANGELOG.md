@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1rc3
+
+- Smooth inward mask feathering removes the clipped-Gaussian opacity step without expanding foreground support.
+- Preserve freshly parsed target lips and oral detail; refresh semantic parsing on every frame in mouth-aware adapters.
+- Mask-normalized local lighting/chroma transfer excludes protected mouths and occluders.
+- Add disabled, numerically tested partial research operators for September 2026 shadow harmonisation and RefGAP.
+- Virtualcam remains free of the visible demo label by default.
+
+
 ## 0.5.1rc2 — 2026-10-05
 
 - Virtualcam starts without the synthetic-demo corner label. `--visible-watermark` adds it explicitly.
