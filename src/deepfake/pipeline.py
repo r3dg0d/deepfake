@@ -155,6 +155,7 @@ class FaceSwapPipeline:
                 color_match=color,
                 temporal_smooth=smooth,
                 visible_mask=estimate.visible_mask,
+                eye_mask=estimate.eye_mask,
                 color_state=self._colors.setdefault(tid, ColorState()),
             )
             composite_ms += (time.perf_counter() - tc) * 1000

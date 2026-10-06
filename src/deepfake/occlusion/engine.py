@@ -27,6 +27,7 @@ class MaskEstimate:
     temporal_state: MaskState | None
     status: str
     latency_ms: float
+    eye_mask: np.ndarray | None = None
 
 
 class OcclusionEngine:
@@ -77,7 +78,8 @@ class OcclusionEngine:
         prev = temporal_state
         face, confidence = None, 0.0
         mouth = zeros.copy()
-        detailed = hasattr(self.models, "parse_details")
+        eyes = zeros.copy()
+        detailed = hasattr(self.models, "parse_details") or hasattr(self.models, "parse_regions")
         warped_visible = None
         age = 0 if prev is None else prev.age + 1
         if prev is not None and prev.gray.shape == gray.shape:
@@ -99,7 +101,9 @@ class OcclusionEngine:
                 age = 0
         try:
             if face is None:
-                if detailed:
+                if hasattr(self.models, "parse_regions"):
+                    face, confidence, mouth, eyes = self.models.parse_regions(frame)
+                elif detailed:
                     # Speech changes locally even when whole-crop motion is small.
                     # Refresh oral detail every frame; never propagate an old mouth.
                     face, confidence, mouth = self.models.parse_details(frame)
@@ -113,6 +117,8 @@ class OcclusionEngine:
                 or current.shape != (h, w)
                 or not np.isfinite(face).all()
                 or not np.isfinite(current).all()
+                or eyes.shape != (h, w)
+                or not np.isfinite(eyes).all()
                 or mouth.shape != (h, w)
                 or not np.isfinite(mouth).all()
                 or not np.isfinite(confidence)
@@ -164,5 +170,12 @@ class OcclusionEngine:
             status = "occlusion active" if np.any((face > 0.5) & (current < 0.8)) else "visible face"
         state = MaskState(gray, alpha.copy(), face.copy(), age, confidence)
         return MaskEstimate(
-            face, np.clip(face - alpha, 0, 1), alpha, confidence, state, status, (time.perf_counter() - t0) * 1000
+            face,
+            np.clip(face - alpha, 0, 1),
+            alpha,
+            confidence,
+            state,
+            status,
+            (time.perf_counter() - t0) * 1000,
+            np.clip(eyes, 0, 1) * alpha,
         )

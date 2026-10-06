@@ -41,3 +41,7 @@ We have no ground-truth ArcFace identity accuracy, LPIPS study, true alpha matte
 ## 0.5.1rc1 profile and timing corrections
 
 YuNet uses a 0.6 detection threshold; measured detector scores retain their meaning. Quality mode selects the largest face by default, with explicit multi-face opt-in. Local target LAB chroma is estimated only within visible support; normalized masked convolution excludes hidden pixels from local statistics; bounded low-frequency luminance and target chroma transfer reduce lighting seams. Exposure clipping and profile seams remain possible. Fractional rates near an integer target multiplier use that multiplier instead of an unnecessary extra pass; stale heuristic choices are recomputed. The hidden `compare` command renders clips at source timestamps and clearly labels recomputed masks as diagnostics, not stored output-frame ground truth.
+
+### Eye detail (0.5.1rc4)
+
+BiSeNet exposes current eye classes alongside mouth/face regions from the same inference. The estimate carries an eye mask intersected with visible alpha. A bounded luminance detail filter operates on generated eye pixels before paste enlargement; the final visible matte still controls all compositing. No target eye pixels or restoration model are substituted. Area crop downsampling and cubic enlargement reduce avoidable resampling softness; AlphaFace's native 256-pixel synthesis remains the resolution limit.

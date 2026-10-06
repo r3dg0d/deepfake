@@ -45,7 +45,11 @@ class SemanticMasks:
         return face, confidence
 
     def parse_details(self, crop: np.ndarray) -> tuple[np.ndarray, float, np.ndarray]:
-        """Face support and current target mouth/lips, from the same inference."""
+        face, confidence, mouth, _ = self.parse_regions(crop)
+        return face, confidence, mouth
+
+    def parse_regions(self, crop: np.ndarray) -> tuple[np.ndarray, float, np.ndarray, np.ndarray]:
+        """Face, mouth and eye regions from one current-frame inference."""
         import cv2
 
         rgb = cv2.resize(crop, (512, 512))[:, :, ::-1].astype(np.float32) / 255
@@ -77,7 +81,9 @@ class SemanticMasks:
             mask = F.interpolate(face[:, None].float(), size=crop.shape[:2], mode="nearest")
             mouth = (labels == 11) | (labels == 12) | (labels == 13)
             mouth = F.interpolate(mouth[:, None].float(), size=crop.shape[:2], mode="nearest")
-            return mask[0, 0].cpu().numpy(), confidence, mouth[0, 0].cpu().numpy()
+            eyes = (labels == 4) | (labels == 5)
+            eyes = F.interpolate(eyes[:, None].float(), size=crop.shape[:2], mode="nearest")
+            return mask[0, 0].cpu().numpy(), confidence, mouth[0, 0].cpu().numpy(), eyes[0, 0].cpu().numpy()
         logits = self.parser.run([self.parser.get_outputs()[0].name], {self.parser.get_inputs()[0].name: inp})[0][0]
         labels = logits.argmax(0)
         shifted = logits - logits.max(0)
@@ -85,10 +91,12 @@ class SemanticMasks:
         face = np.isin(labels, FACE_CLASSES)
         confidence = float(certainty[face].mean()) if face.any() else 0.0
         mouth = np.isin(labels, (11, 12, 13))
+        eyes = np.isin(labels, (4, 5))
         return (
             cv2.resize(face.astype(np.float32), crop.shape[1::-1], interpolation=cv2.INTER_NEAREST),
             confidence,
             cv2.resize(mouth.astype(np.float32), crop.shape[1::-1], interpolation=cv2.INTER_NEAREST),
+            cv2.resize(eyes.astype(np.float32), crop.shape[1::-1], interpolation=cv2.INTER_NEAREST),
         )
 
     def visible(self, crop: np.ndarray) -> np.ndarray:

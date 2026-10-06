@@ -168,7 +168,8 @@ def align_crop(frame_bgr: np.ndarray, box: FaceBox, size: int = 256, pad: float 
     crop = frame_bgr[paste.y : paste.y + paste.h, paste.x : paste.x + paste.w]
     if crop.size == 0:
         return np.zeros((size, size, 3), dtype=np.uint8), paste
-    resized = cv2.resize(crop, (size, size), interpolation=cv2.INTER_LINEAR)
+    interpolation = cv2.INTER_AREA if min(crop.shape[:2]) > size else cv2.INTER_CUBIC
+    resized = cv2.resize(crop, (size, size), interpolation=interpolation)
     return resized, paste
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1rc4
+
+- Use area downsampling for face crops and cubic enlargement for pasted faces to reduce avoidable eye softness.
+- Add bounded, noise-gated luminance detail on freshly parsed generated eyes; target eyes are never copied.
+- Intersect eye regions with current visible alpha so foreground protection and mouth preservation remain active.
+
+
 ## 0.5.1rc3
 
 - Smooth inward mask feathering removes the clipped-Gaussian opacity step without expanding foreground support.

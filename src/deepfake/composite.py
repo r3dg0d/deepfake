@@ -74,6 +74,30 @@ def color_match_lab(
     return cv2.cvtColor(out, cv2.COLOR_LAB2BGR)
 
 
+def enhance_eye_detail(face_bgr: np.ndarray, eye_mask: np.ndarray | None) -> np.ndarray:
+    """Bounded luminance-only detail on generated eyes; never borrow target eyes."""
+    import cv2
+
+    if eye_mask is None or not np.any(eye_mask):
+        return face_bgr
+    if eye_mask.shape != face_bgr.shape[:2] or not np.isfinite(eye_mask).all():
+        raise ValueError("eye mask must be finite and match the generated crop")
+    lab = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2LAB)
+    luminance = lab[:, :, 0].astype(np.float32)
+    residual = luminance - cv2.GaussianBlur(luminance, (0, 0), 0.8)
+    # Ignore sub-two-level noise and cap correction to six luminance levels.
+    detail = np.sign(residual) * np.maximum(np.abs(residual) - 2, 0)
+    gate = cv2.GaussianBlur(np.clip(eye_mask, 0, 1).astype(np.float32), (0, 0), 0.8)
+    correction = np.clip(detail * 0.65, -6, 6) * gate
+    enhanced = luminance + correction
+    lo = cv2.erode(luminance, np.ones((3, 3), np.uint8))
+    hi = cv2.dilate(luminance, np.ones((3, 3), np.uint8))
+    lab[:, :, 0] = np.clip(enhanced, lo, hi).round().astype(np.uint8)
+    output = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    # LAB round-trip must not change skin or other regions when inactive.
+    return np.where((np.abs(correction) >= 0.5)[..., None], output, face_bgr)
+
+
 def paste_face(
     frame_bgr: np.ndarray,
     face_bgr: np.ndarray,
@@ -85,6 +109,7 @@ def paste_face(
     temporal_smooth: float = 0.0,
     visible_mask: np.ndarray | None = None,
     color_state: ColorState | None = None,
+    eye_mask: np.ndarray | None = None,
 ) -> np.ndarray:
     import cv2
 
@@ -99,7 +124,11 @@ def paste_face(
     # Resize into the ORIGINAL box, then clip; never squash an offscreen face.
     original_w, original_h = int(box.w), int(box.h)
     ox, oy = x - int(box.x), y - int(box.y)
-    resized = cv2.resize(face_bgr, (original_w, original_h))[oy : oy + h, ox : ox + w]
+    detailed_face = enhance_eye_detail(face_bgr, eye_mask)
+    interpolation = (
+        cv2.INTER_CUBIC if original_w > face_bgr.shape[1] and original_h > face_bgr.shape[0] else cv2.INTER_AREA
+    )
+    resized = cv2.resize(detailed_face, (original_w, original_h), interpolation=interpolation)[oy : oy + h, ox : ox + w]
     roi = frame_bgr[y:y1, x:x1]
     full_mask = (
         _oval_soft_mask(original_h, original_w, feather)
