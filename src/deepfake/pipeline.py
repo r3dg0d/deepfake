@@ -94,6 +94,8 @@ class FaceSwapPipeline:
         Frame generation interpolates these clean frames; the watermark is
         stamped on every presented frame afterwards so it stays crisp.
         """
+        import cv2
+
         t0 = time.perf_counter()
         preset = self.cfg.preset
         multi = self.cfg.multi_face if self.cfg.multi_face is not None else preset.multi_face
@@ -144,7 +146,15 @@ class FaceSwapPipeline:
             statuses.append(estimate.status)
             if not np.any(estimate.visible_mask) or track.confidence < 0.35:
                 continue
-            result = self.swapper.swap(crop)
+            if box.landmarks is not None and hasattr(self.swapper, "swap_aligned"):
+                native = frame_bgr[paste_box.y : paste_box.y + paste_box.h, paste_box.x : paste_box.x + paste_box.w]
+                points = np.asarray(box.landmarks) - [paste_box.x, paste_box.y]
+                result = self.swapper.swap_aligned(native, points)
+            else:
+                result = self.swapper.swap(crop)
+            if result.coverage_mask is not None:
+                coverage = cv2.resize(result.coverage_mask, crop.shape[1::-1], interpolation=cv2.INTER_NEAREST)
+                estimate.visible_mask *= coverage
             infer_ms += result.inference_ms
             tc = time.perf_counter()
             out = paste_face(

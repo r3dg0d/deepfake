@@ -215,3 +215,31 @@ class AsyncDetector:
         with self._cv:
             self._closed = True
             self._cv.notify()
+
+
+def arcface_transform(landmarks, size: int = 256, *, source: bool = False) -> np.ndarray | None:
+    """Validated nonreflecting similarity fit for five measured landmarks.
+
+    Source ArcFace uses the 112 template. Target swapping uses the wider 128
+    template at model resolution. No invented landmarks or perspective warp.
+    """
+    import cv2
+
+    points = np.asarray(landmarks, np.float32)
+    if points.shape != (5, 2) or not np.isfinite(points).all():
+        return None
+    eye_distance = float(np.linalg.norm(points[1] - points[0]))
+    if eye_distance < 4 or points[1, 0] <= points[0, 0]:
+        return None
+    reference = np.array(
+        [[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366], [41.5493, 92.3655], [70.7299, 92.2041]], np.float32
+    )
+    reference = reference * (size / 112) if source else (reference + [8, 0]) * (size / 128)
+    matrix, _ = cv2.estimateAffinePartial2D(points, reference.astype(np.float32), method=cv2.LMEDS)
+    if matrix is None or not np.isfinite(matrix).all() or np.linalg.det(matrix[:, :2]) <= 0:
+        return None
+    fitted = points @ matrix[:, :2].T + matrix[:, 2]
+    error = np.sqrt(np.mean(np.sum((fitted - reference) ** 2, axis=1)))
+    if error > size * 0.065:
+        return None
+    return matrix

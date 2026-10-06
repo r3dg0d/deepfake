@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1rc5
+
+- Align source identity and native target ROIs with measured five-point similarity transforms; inverse-warp generated faces into the existing compositing coordinates.
+- Intersect inverse-warp coverage with visible alpha, including FrameGen, and retain missing/invalid-landmark fallback.
+- Document rejected higher-resolution inference trials and full-head/body research through October 6.
+
+
 ## 0.5.1rc4
 
 - Use area downsampling for face crops and cubic enlargement for pasted faces to reduce avoidable eye softness.

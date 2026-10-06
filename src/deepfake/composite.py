@@ -124,6 +124,8 @@ def paste_face(
     # Resize into the ORIGINAL box, then clip; never squash an offscreen face.
     original_w, original_h = int(box.w), int(box.h)
     ox, oy = x - int(box.x), y - int(box.y)
+    if eye_mask is not None and eye_mask.shape != face_bgr.shape[:2]:
+        eye_mask = cv2.resize(eye_mask.astype(np.float32), face_bgr.shape[1::-1])
     detailed_face = enhance_eye_detail(face_bgr, eye_mask)
     interpolation = (
         cv2.INTER_CUBIC if original_w > face_bgr.shape[1] and original_h > face_bgr.shape[0] else cv2.INTER_AREA

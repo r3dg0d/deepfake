@@ -45,3 +45,7 @@ YuNet uses a 0.6 detection threshold; measured detector scores retain their mean
 ### Eye detail (0.5.1rc4)
 
 BiSeNet exposes current eye classes alongside mouth/face regions from the same inference. The estimate carries an eye mask intersected with visible alpha. A bounded luminance detail filter operates on generated eye pixels before paste enlargement; the final visible matte still controls all compositing. No target eye pixels or restoration model are substituted. Area crop downsampling and cubic enlargement reduce avoidable resampling softness; AlphaFace's native 256-pixel synthesis remains the resolution limit.
+
+### Aligned inference (0.5.1rc5)
+
+AlphaFace now receives a validated five-landmark similarity warp sampled from the native frame ROI. Its 256-pixel result is inverse-warped back into the original ROI. Source encoding uses the ArcFace 112 template when measured landmarks are valid. Occlusion and mouth masks remain in the existing square-crop coordinates; inverse-warp coverage intersects visible alpha and also reaches FrameGen. Invalid/absent landmarks use the crop fallback. Direct 384/512 inference trials degraded appearance and are not enabled.

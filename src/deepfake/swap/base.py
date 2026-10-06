@@ -11,6 +11,7 @@ class SwapResult:
     face_bgr: np.ndarray
     inference_ms: float
     backend: str
+    coverage_mask: np.ndarray | None = None
 
 
 class Swapper(Protocol):

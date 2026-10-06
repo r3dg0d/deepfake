@@ -140,12 +140,18 @@ class AlphaFaceSwapper:
         # Prefer a face crop of the identity image so ArcFace gets face, not background.
         face = source_bgr
         try:
-            from ..detect import align_crop, create_detector
+            from ..detect import align_crop, arcface_transform, create_detector
 
             boxes = create_detector("auto").detect(source_bgr)
             if boxes:
                 boxes = sorted(boxes, key=lambda b: b.w * b.h, reverse=True)
-                face, _ = align_crop(source_bgr, boxes[0], size=256, pad=0.25)
+                matrix = arcface_transform(boxes[0].landmarks, 112, source=True)
+                if matrix is not None:
+                    face = cv2.warpAffine(
+                        source_bgr, matrix, (112, 112), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT_101
+                    )
+                else:
+                    face, _ = align_crop(source_bgr, boxes[0], size=256, pad=0.25)
         except Exception:
             face = source_bgr
         # Source identity path: 112×112, normalized like eval.py s_transform
@@ -193,3 +199,27 @@ class AlphaFaceSwapper:
             )
         ms = (time.perf_counter() - t0) * 1000
         return SwapResult(face_bgr=face, inference_ms=ms, backend=self.name)
+
+    def swap_aligned(self, native_crop_bgr: np.ndarray, landmarks) -> SwapResult:
+        """Allocate model pixels to the face, then invert into native ROI geometry."""
+        from ..detect import arcface_transform
+
+        matrix = arcface_transform(landmarks, 256)
+        if matrix is None:
+            return self.swap(native_crop_bgr)
+        t0 = time.perf_counter()
+        aligned = cv2.warpAffine(
+            native_crop_bgr, matrix, (256, 256), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT_101
+        )
+        result = self.swap(aligned)
+        inverse = cv2.invertAffineTransform(matrix)
+        h, w = native_crop_bgr.shape[:2]
+        result.face_bgr = cv2.warpAffine(
+            result.face_bgr, inverse, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT
+        )
+        coverage = cv2.warpAffine(
+            np.ones((256, 256), np.uint8), inverse, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT
+        )
+        result.coverage_mask = cv2.erode(coverage, np.ones((3, 3), np.uint8)).astype(np.float32)
+        result.inference_ms = (time.perf_counter() - t0) * 1000
+        return result
