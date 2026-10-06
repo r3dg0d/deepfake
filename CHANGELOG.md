@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1rc6 — 2026-10-06
+
+- Add optional GFPGAN learned eye detail, with five-point alignment, bounded changes, strict current-eye/visibility gating, and CPU retry on CUDA allocation failure. Available via `--eye-restoration gfpgan`; disabled by default pending broader blink/identity validation.
+- Pin the 340 MB restoration asset by size and SHA-256; no implicit downloads or bundled weights.
+- Add a separately isolated GHOST 2.0 head-image experiment that loads inference tensors strictly, avoids training-only dependencies, fixes missing upstream morphology imports, and reduces nearest-background memory with a KD-tree. Real renders demonstrate head/hair transfer and remaining neck/occlusion defects; no realtime head mode claim.
+- Add isolated Wan-Animate replacement controls and a local graph adapter, including full-reference letterboxing, expanded masked-background conditioning, input validation and cache invalidation. Body output remains experimental.
+- Validate a complete 514-frame restored-face export with signed video binding and post-encode invisible disclosure. Extend released-code and resource review for head/body replacement.
+
 ## 0.5.1rc5
 
 - Align source identity and native target ROIs with measured five-point similarity transforms; inverse-warp generated faces into the existing compositing coordinates.

@@ -38,6 +38,7 @@ class PipelineConfig:
     max_frames: int | None = None
     allow_passthrough: bool = False
     swap_precision: str = "fp32"
+    eye_restoration: str = "off"
     async_detect: bool = False  # legacy option; tracked detection uses the current frame
     frame_gen: FrameGenSettings | None = None
     debug_overlay: bool = False
@@ -69,6 +70,13 @@ class FaceSwapPipeline:
         self.stage_stats = {}
         self.last_masks = []
         self._frame_i = 0
+        self.eye_restorer = None
+        if cfg.eye_restoration == "gfpgan":
+            from .restoration import EyeRestorer
+
+            self.eye_restorer = EyeRestorer(cfg.device)
+        elif cfg.eye_restoration != "off":
+            raise ValueError("eye restoration must be off or gfpgan")
 
     def set_source(self, source_bgr: np.ndarray) -> None:
         self.swapper.set_source(source_bgr)
@@ -104,7 +112,7 @@ class FaceSwapPipeline:
         smooth = self.cfg.temporal_smooth if self.cfg.temporal_smooth is not None else preset.temporal_smooth
 
         infer_ms = 0.0
-        detect_ms = track_ms = occlusion_ms = composite_ms = 0.0
+        detect_ms = track_ms = occlusion_ms = composite_ms = restoration_ms = 0.0
         run_detect = (self._frame_i % max(1, preset.detect_interval)) == 0 or not self.tracker.tracks
         td = time.perf_counter()
         boxes = self.detector.detect(frame_bgr) if run_detect else None
@@ -156,6 +164,14 @@ class FaceSwapPipeline:
                 coverage = cv2.resize(result.coverage_mask, crop.shape[1::-1], interpolation=cv2.INTER_NEAREST)
                 estimate.visible_mask *= coverage
             infer_ms += result.inference_ms
+            if self.eye_restorer is not None and box.landmarks is not None:
+                points = np.asarray(box.landmarks) - [paste_box.x, paste_box.y]
+                # Fallback swappers return a 256-square crop rather than the native ROI.
+                points = points * [result.face_bgr.shape[1] / paste_box.w, result.face_bgr.shape[0] / paste_box.h]
+                result.face_bgr = self.eye_restorer.restore(
+                    result.face_bgr, points, estimate.eye_mask, estimate.visible_mask
+                )
+                restoration_ms += self.eye_restorer.latency_ms
             tc = time.perf_counter()
             out = paste_face(
                 out,
@@ -177,6 +193,8 @@ class FaceSwapPipeline:
             "track_ms": round(track_ms, 2),
             "occlusion_ms": round(occlusion_ms, 2),
             "composite_ms": round(composite_ms, 2),
+            "eye_restoration": self.cfg.eye_restoration,
+            "restoration_ms": round(restoration_ms, 2),
             "occlusion_backend": self.occlusion.backend,
             "occlusion_confidence": round(min(confidences), 3) if confidences else None,
             "occlusion_status": "; ".join(statuses) if statuses else "no face",

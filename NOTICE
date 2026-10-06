@@ -44,3 +44,27 @@ Optional C2PA SDK
   Official contentauth/c2pa-python dependency; Apache-2.0/MIT upstream terms.
   https://github.com/contentauth/c2pa-python
   No development certificate or signing key is distributed.
+
+Optional GFPGAN 1.4 restoration
+  TencentARC GFPGAN: Apache-2.0; FFHQ training-data terms apply.
+  https://github.com/TencentARC/GFPGAN
+  Separately downloaded ONNX conversion from FaceFusion assets/models-3.0.0.
+  Independent adapter; no FaceFusion wrapper code or model weights redistributed.
+
+Experimental GHOST 2.0 head inference
+  Official GHOST source/models: Apache-2.0, https://github.com/ai-forever/ghost-2.0
+  Optional external StyleMatte source/models: CC-BY-SA-4.0,
+  https://github.com/chroneus/stylematte
+  Optional LaMa inference wrapper: https://github.com/enesmsahin/simple-lama-inpainting
+  GHOST/StyleMatte/LaMa sources and weights are not bundled. Experimental adapter
+  requires a separate reviewed runtime and does not activate the live camera.
+
+Experimental Wan replacement graph
+  Wan-Animate: Apache-2.0, https://github.com/Wan-Video/Wan2.2
+  External ComfyUI: GPL-3.0, https://github.com/Comfy-Org/ComfyUI
+  External GGUF loader: Apache-2.0, https://github.com/city96/ComfyUI-GGUF
+  External DWPose: Apache-2.0, https://github.com/IDEA-Research/DWPose
+  External SAM2: Apache-2.0, https://github.com/facebookresearch/sam2
+  These runtimes, preprocessors and weights are separately installed; none are
+  bundled or activated by the live face pipeline. QuantStack GGUF conversion
+  and Comfy-Org model repackaging are separate downloads with upstream terms.

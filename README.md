@@ -8,7 +8,11 @@ deepfake virtualcam
 deepfake video -i input.mp4 -f face.png -o output.mp4
 ```
 
-The last source face is remembered. Occlusion handling, NVIDIA Optical Flow frame generation and the Quickshell status widget are automatic once their dependencies are installed. Raw webcam/virtual-camera frames retain visible disclosure. File exports use verified C2PA when available, with an optional invisible TrustMark disclosure.
+The last source face is remembered. Occlusion handling, NVIDIA Optical Flow frame generation and the Quickshell status widget are automatic once their dependencies are installed. The live demo label is off by default; `--visible-watermark` adds it explicitly. File exports use verified C2PA when available, with an optional invisible TrustMark disclosure.
+
+Optional learned eye restoration is available with `deepfake models install gfpgan --yes` (340 MB), then `deepfake virtualcam --eye-restoration gfpgan` or the same flag on `video`/`webcam`. It restores generated eyes within the current visible-eye mask; original foreground objects and mouth pixels remain controlled by the occlusion compositor. It is off by default because a generative restorer can change eye shape and blink appearance. CUDA memory exhaustion switches this optional stage to CPU, with a warning about slower inference.
+
+Full-head experiments use a separate released GHOST 2.0 model, with real local image renders. The prototype still has head/neck seams and foreground-occlusion limitations. An isolated Wan-Animate upper-body replacement graph also runs locally, but its current quantized output fails facial-quality review. Head/body research and backend availability are documented in [the research review](docs/head-body-research-2026.md); these capabilities are not presented as a validated live-camera mode.
 
 ## Install
 

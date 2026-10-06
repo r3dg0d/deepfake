@@ -59,6 +59,12 @@ def _common_io_options(fn):
         click.option("--blend-feather", type=int, default=None),
         click.option("--color-match/--no-color-match", default=None),
         click.option("--temporal-smooth", type=float, default=None),
+        click.option(
+            "--eye-restoration",
+            type=click.Choice(["off", "gfpgan"]),
+            default="off",
+            help="Optional learned eye detail; can alter eye shape. Requires separately installed gfpgan.",
+        ),
         click.option("--backend", type=click.Choice(["auto", "alphaface", "inswapper", "passthrough"]), default="auto"),
         click.option("--watermark/--no-watermark", default=None, hidden=True),
         click.option("--visible-watermark", is_flag=True, help="Also stamp visible synthetic-media disclosure."),
@@ -244,6 +250,7 @@ def _cfg_from_kwargs(kwargs: dict):
         max_frames=kwargs.get("max_frames"),
         allow_passthrough=(backend == "passthrough"),
         swap_precision=_swap_precision(kwargs),
+        eye_restoration=kwargs.get("eye_restoration", "off"),
         debug_overlay=kwargs.get("debug_overlay", False),
         show_mask=kwargs.get("show_mask"),
     )

@@ -11,6 +11,16 @@ from pathlib import Path
 from .paths import models_dir
 
 ASSETS = {
+    "gfpgan": {
+        "file": "gfpgan_1.4.onnx",
+        "category": "FACE RESTORATION",
+        "version": "GFPGAN-1.4 / models-3.0.0",
+        "bytes": 340299087,
+        "sha256": "accc4757b26bdb89b32b4d3500d4f79c9dff97c1dd7c7104bf9dcb95e3311385",
+        "url": "https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/gfpgan_1.4.onnx",
+        "license": "Apache-2.0 (TencentARC GFPGAN); FFHQ dataset terms apply",
+        "upstream": "https://github.com/TencentARC/GFPGAN",
+    },
     "bisenet": {
         "file": "bisenet_resnet_18.onnx",
         "category": "FACE PARSING",
