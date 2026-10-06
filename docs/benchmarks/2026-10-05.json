@@ -1,0 +1,345 @@
+{
+  "version": "0.5.1rc1",
+  "baseline_version": "installed local 0.5.0; original project checkout 0.4.0; remote main 0.3.0",
+  "pipeline": {
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "torch": "2.6.0+cu124",
+    "camera_fps": 30.0,
+    "target_fps": 60.0,
+    "swap_precision": "bf16",
+    "framegen_backend": "nvof balanced",
+    "results": {
+      "720p": {
+        "swap_only": {
+          "swap_fps": 24.7,
+          "swap_ms_p50": 40.23,
+          "swap_ms_p95": 54.86,
+          "peak_vram_mb_torch": 1411.1
+        },
+        "framegen_only_2x": {
+          "backend": "nvof",
+          "variant": "balanced",
+          "resolution": "1280x720",
+          "factor": 2,
+          "ms_per_generated_frame": 14.295,
+          "ms_per_source_interval": 14.295,
+          "generated_fps_capacity": 70.0,
+          "peak_vram_mb": 1411.1,
+          "samples": 80
+        },
+        "framegen_only_3x": {
+          "backend": "nvof",
+          "variant": "balanced",
+          "resolution": "1280x720",
+          "factor": 3,
+          "ms_per_generated_frame": 7.754,
+          "ms_per_source_interval": 15.508,
+          "generated_fps_capacity": 129.0,
+          "peak_vram_mb": 1411.1,
+          "samples": 80
+        },
+        "pipeline_no_framegen": {
+          "input_fps": 30.0,
+          "swap_fps": 26.9,
+          "output_fps": 26.9,
+          "sink_fps": 26.9,
+          "swap_latency_ms": 38.7,
+          "framegen_ms_per_frame": null,
+          "dropped_source_frames": 24,
+          "gpu_util_pct": 64.0,
+          "vram_used_mb": 11831.625,
+          "swap_backend": "alphaface",
+          "detect_ms": 0.0,
+          "track_ms": 1.84,
+          "occlusion_ms": 6.06,
+          "composite_ms": 7.2,
+          "occlusion_backend": "bisenet+xseg / CUDAExecutionProvider,CPUExecutionProvider",
+          "occlusion_confidence": 0.788,
+          "occlusion_status": "occlusion active",
+          "tracking_status": "locked",
+          "track_ids": [
+            1
+          ],
+          "parser_refresh_interval": 2,
+          "pose_measurement": "5-point nose/eye yaw proxy; not degrees",
+          "total_latency_ms": 54.2,
+          "peak_vram_mb_torch": 1411.6
+        },
+        "pipeline_framegen_2x": {
+          "input_fps": 30.0,
+          "swap_fps": 19.6,
+          "output_fps": 58.7,
+          "sink_fps": 59.8,
+          "swap_latency_ms": 50.3,
+          "framegen_ms_per_frame": 14.1,
+          "dropped_source_frames": 83,
+          "gpu_util_pct": 58.0,
+          "vram_used_mb": 12108.625,
+          "swap_backend": "alphaface",
+          "detect_ms": 0.0,
+          "track_ms": 2.35,
+          "occlusion_ms": 6.35,
+          "composite_ms": 7.34,
+          "occlusion_backend": "bisenet+xseg / CUDAExecutionProvider,CPUExecutionProvider",
+          "occlusion_confidence": 0.788,
+          "occlusion_status": "occlusion active",
+          "tracking_status": "locked",
+          "track_ids": [
+            1
+          ],
+          "parser_refresh_interval": 2,
+          "pose_measurement": "5-point nose/eye yaw proxy; not degrees",
+          "total_latency_ms": 145.9,
+          "generated_frames": 308,
+          "keyframes": 156,
+          "held_frames": 15,
+          "late_dropped": 15,
+          "queue_depth": 0,
+          "pacer_delay_ms": 170.9,
+          "framegen_shed_level": 0,
+          "peak_vram_mb_torch": 1661.9
+        },
+        "pipeline_framegen_3x": {
+          "input_fps": 30.0,
+          "swap_fps": 19.5,
+          "output_fps": 89.7,
+          "sink_fps": 90.1,
+          "swap_latency_ms": 50.9,
+          "framegen_ms_per_frame": 8.8,
+          "dropped_source_frames": 84,
+          "gpu_util_pct": 60.0,
+          "vram_used_mb": 12106.25,
+          "swap_backend": "alphaface",
+          "detect_ms": 2.28,
+          "track_ms": 2.2,
+          "occlusion_ms": 15.16,
+          "composite_ms": 7.43,
+          "occlusion_backend": "bisenet+xseg / CUDAExecutionProvider,CPUExecutionProvider",
+          "occlusion_confidence": 0.802,
+          "occlusion_status": "occlusion active",
+          "tracking_status": "locked",
+          "track_ids": [
+            1
+          ],
+          "parser_refresh_interval": 2,
+          "pose_measurement": "5-point nose/eye yaw proxy; not degrees",
+          "total_latency_ms": 153.5,
+          "generated_frames": 549,
+          "keyframes": 155,
+          "held_frames": 14,
+          "late_dropped": 14,
+          "queue_depth": 0,
+          "pacer_delay_ms": 173.9,
+          "framegen_shed_level": 0,
+          "peak_vram_mb_torch": 1652.3
+        }
+      }
+    },
+    "recommendation": {
+      "720p": {
+        "mode": "2x",
+        "expected_output_fps": 58.7,
+        "added_latency_ms": 91.7,
+        "reason": "measured 58.7 new frames/s, 3.2% held slots"
+      }
+    }
+  },
+  "occlusion": {
+    "fixture": "fictional face + stylized foreground shapes; NOT real-object validation",
+    "backend": "bisenet+xseg / CUDAExecutionProvider,CPUExecutionProvider",
+    "rows": {
+      "hand": {
+        "old_foreground_leak_fraction": 1.0,
+        "boundary_f1_tolerance_2px": 0.3997,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 0.7766,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.8352,
+        "alpha_delta_mean": 0.0281,
+        "occlusion_ms_p50": 8.36,
+        "frames": 18
+      },
+      "hair": {
+        "old_foreground_leak_fraction": 1.0,
+        "boundary_f1_tolerance_2px": 0.3275,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 0.7529,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.9522,
+        "alpha_delta_mean": 0.0119,
+        "occlusion_ms_p50": 7.5,
+        "frames": 18
+      },
+      "glasses": {
+        "old_foreground_leak_fraction": 1.0,
+        "boundary_f1_tolerance_2px": 0.3166,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 0.4127,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.9058,
+        "alpha_delta_mean": 0.0141,
+        "occlusion_ms_p50": 7.44,
+        "frames": 18
+      },
+      "microphone": {
+        "old_foreground_leak_fraction": 0.9444,
+        "boundary_f1_tolerance_2px": 0.3938,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 0.6515,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.9604,
+        "alpha_delta_mean": 0.0151,
+        "occlusion_ms_p50": 7.65,
+        "frames": 18
+      },
+      "cup": {
+        "old_foreground_leak_fraction": 1.0,
+        "boundary_f1_tolerance_2px": 0.3423,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 0.7738,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.8556,
+        "alpha_delta_mean": 0.0213,
+        "occlusion_ms_p50": 7.51,
+        "frames": 18
+      },
+      "phone": {
+        "old_foreground_leak_fraction": 1.0,
+        "boundary_f1_tolerance_2px": 0.5322,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 0.839,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.8764,
+        "alpha_delta_mean": 0.0294,
+        "occlusion_ms_p50": 7.55,
+        "frames": 18
+      },
+      "full": {
+        "old_foreground_leak_fraction": 1.0,
+        "boundary_f1_tolerance_2px": 1.0,
+        "static_alpha_delta_mean": 0.0,
+        "mask_iou_mean": 1.0,
+        "foreground_leak_fraction": 0.0,
+        "visible_face_retained_fraction": 0.0,
+        "alpha_delta_mean": 0.0,
+        "occlusion_ms_p50": 6.55,
+        "frames": 18
+      }
+    },
+    "comparison": "local fictional fixture clip; private footage not published",
+    "measured_at_unix": 1791257470.1626425
+  },
+  "real_hand": {
+    "scope": "manually selected hand interior on one real frame; not a full ground-truth segmentation benchmark",
+    "frame": 490,
+    "annotated_pixels": 2921,
+    "mean_swap_alpha": 0.0,
+    "pixels_alpha_above_0_1": 0,
+    "max_alpha": 0.0,
+    "remaining_visible_pixels": 1361,
+    "parser": "occlusion active"
+  },
+  "provenance_stress": [
+    {
+      "case": "h264",
+      "watermark_detections": 2,
+      "samples": 5,
+      "c2pa_present": false,
+      "c2pa_state": null
+    },
+    {
+      "case": "av1",
+      "watermark_detections": 5,
+      "samples": 5,
+      "c2pa_present": false,
+      "c2pa_state": null
+    },
+    {
+      "case": "low_bitrate",
+      "watermark_detections": 0,
+      "samples": 5,
+      "c2pa_present": false,
+      "c2pa_state": null
+    },
+    {
+      "case": "resize",
+      "watermark_detections": 4,
+      "samples": 5,
+      "c2pa_present": false,
+      "c2pa_state": null
+    },
+    {
+      "case": "crop",
+      "watermark_detections": 4,
+      "samples": 5,
+      "c2pa_present": false,
+      "c2pa_state": null
+    },
+    {
+      "case": "fps",
+      "watermark_detections": 5,
+      "samples": 5,
+      "c2pa_present": false,
+      "c2pa_state": null
+    },
+    {
+      "case": "metadata_strip",
+      "watermark_detections": 5,
+      "samples": 5,
+      "c2pa_present": false,
+      "c2pa_state": null
+    }
+  ],
+  "notes": [
+    "Eight-second paced synthetic portrait tests, 720p, RTX 4090; two-core Nix dependency build ran concurrently. Whole-device VRAM includes other processes.",
+    "Private consented clip used only locally. One hand-interior annotation is not a labeled full dataset.",
+    "Live tests reported separately; no calibrated identity/LPIPS ground truth.",
+    "Final bounded camera tests detected an active face track and ran AlphaFace; no witnessed live-object or lighting choreography. Virtualcam numbers are the last published IPC sample."
+  ],
+  "webcam": {
+    "input_fps": 24.0,
+    "swap_fps": 24.0,
+    "output_fps": 73.4,
+    "sink_fps": 73.9,
+    "swap_latency_ms": 35.8,
+    "framegen_ms_per_frame": 6.1,
+    "dropped_source_frames": 0,
+    "gpu_util_pct": 64.0,
+    "vram_used_mb": 11878.5,
+    "swap_backend": "alphaface",
+    "detect_ms": 0.0,
+    "track_ms": 1.84,
+    "occlusion_ms": 5.83,
+    "composite_ms": 3.45,
+    "occlusion_backend": "bisenet+xseg / CUDAExecutionProvider,CPUExecutionProvider",
+    "occlusion_confidence": 0.665,
+    "occlusion_status": "occlusion active",
+    "tracking_status": "locked",
+    "track_ids": [
+      1
+    ],
+    "parser_refresh_interval": 2,
+    "pose_measurement": "5-point nose/eye yaw proxy; not degrees",
+    "total_latency_ms": 82.1,
+    "generated_frames": 232,
+    "keyframes": 118,
+    "held_frames": 6,
+    "late_dropped": 6,
+    "queue_depth": 0,
+    "pacer_delay_ms": 106.1,
+    "framegen_shed_level": 0
+  },
+  "virtualcam_last_published": {
+    "source_fps": 24.0,
+    "alphaface_fps": 23.9,
+    "output_fps": 71.6,
+    "latency_ms": 88.6,
+    "vram_mb": 11870.125,
+    "gpu_util_pct": 63.0,
+    "occlusion_ms": 10.6,
+    "occlusion_status": "occlusion active",
+    "tracking_status": "locked",
+    "widget": "running",
+    "framegen_multiplier": 3
+  }
+}

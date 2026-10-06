@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1rc1 — 2026-10-05
+
+- Detect lower-confidence foreground profiles with YuNet (0.6 threshold); quality mode selects the largest face unless `--multi-face` is requested.
+- Avoid accidental 3× FrameGen for 29.999/29.97 FPS input targeting 60 FPS.
+- Refresh heuristic FrameGen choices instead of reusing stale source rates; preserve measured benchmark decisions.
+- Preserve local target chroma within visible support to reduce cyan/magenta casts on strongly lit profiles.
+- Add hidden local `compare` command for original/before/after clips and recomputed mask diagnostics.
+- Preserve and package the existing 0.5.0 mask-aware FrameGen, verified dual provenance and pending Nix CUDA-shell fixes. Nix runtime tools are wrapped into PATH.
+- Add real talking/profile/hand clip validation, final codec stress results and documented coverage limits. This is a prerelease pending broader live-object validation.
+
 ## 0.5.0 — 2026-10-01
 
 - Automatic visible-face compositing using pinned BiSeNet and XSeg, conservative foreground margins, per-track mask flow and fail-original handling.

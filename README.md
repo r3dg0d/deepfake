@@ -57,7 +57,7 @@ deepfake config show
 |---|---|---|
 | `realtime` / `latency` | 640×480, 30 FPS camera; single face | detector every third frame; parser every second; XSeg every frame |
 | `balanced` | 960×540, 24 FPS camera; color matching | detector/parser every second frame; XSeg every frame |
-| `quality` | offline default; original input dimensions | detector and parser every frame; multiple faces; color matching; bidirectional FrameGen flow |
+| `quality` | offline default; original input dimensions | detector and parser every frame; largest face by default (`--multi-face` opt-in); color matching; bidirectional FrameGen flow |
 
 There is no claimed diffusion `cinematic` backend in this release. [VFace, DynamicFace and LivingSwap research](docs/research-2026.md) explains their availability and why an unvalidated alias would be misleading. No face-restoration model silently changes the identity.
 
@@ -106,3 +106,7 @@ pytest -m gpu
 The wrapper is MIT; upstream components retain their own licenses. No model weights, signing keys or private test footage are packaged. [NOTICE](NOTICE), [research matrix through October 1, 2026](docs/research-2026.md), [FrameGen design](docs/frame-generation.md), [changelog](CHANGELOG.md).
 
 AlphaFace: [official code](https://github.com/andrewyu90/Alphaface_Official), [paper](https://arxiv.org/abs/2601.16429).
+
+## October 5 candidate validation
+
+0.5.1rc1 preserves the installed 0.5.0 pipeline, fixes profile detection and fractional-rate FrameGen selection, and adds local original/before/after comparisons. [Measured validation and remaining coverage](docs/benchmarks/2026-10-05.md) includes encoded provenance failures under compression. This is a prerelease.
