@@ -50,7 +50,7 @@ deepfake benchmark                      # AlphaFace + FrameGen pipeline on this 
 deepfake config show
 ```
 
-**Defaults:** AI frame generation is **on** (`auto`), and the matrix Quickshell widget
+**Defaults:** AI frame generation is **on** (`auto`), and the galaxy Quickshell widget
 starts with every processing mode. Escape hatches for debugging:
 
 ```bash

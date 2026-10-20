@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Deepfake
+GenericName=Deepfake Control Widget
+Comment=Live deepfake stats, preview and controls
+Exec=quickshell -c deepfake --no-duplicate --daemonize
+Icon=galaxy-deepfake
+Terminal=false
+Categories=AudioVideo;Video;Utility;
+Keywords=deepfake;face;camera;quickshell;galaxy;
