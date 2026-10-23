@@ -94,10 +94,9 @@ ShellRoot {
     Timer { interval: root.active ? 1000 : 2000; repeat: true; running: root.opened; triggeredOnStart: true; onTriggered: if (!reader.running) reader.running = true }
     // preview refresh ~10 Hz only while visible and live: the widget never competes with inference
     Timer { interval: 100; repeat: true; running: root.opened && root.active && root.page === "Dashboard"; onTriggered: root.serial++ }
-    IpcHandler { target: "deepfake"; function show(): void { root.opened = true } function toggle(): void { root.opened = !root.opened } }
-    FileDialog { id: imagePicker; nameFilters: ["Reference images (*.png *.jpg *.jpeg *.webp)"]; onAccepted: importPath.text = root.path(selectedFile) }
-    FileDialog { id: outputPicker; fileMode: FileDialog.SaveFile; nameFilters: ["MP4 video (*.mp4)"]; onAccepted: { outputPath.text = root.path(selectedFile); root.edit("recording_path", outputPath.text) } }
-    FileDialog { id: videoPicker; nameFilters: ["Video (*.mp4 *.mkv *.mov *.avi *.webm)"]; onAccepted: { videoPath.text = root.path(selectedFile); root.edit("input_video", videoPath.text) } }
+    // `open` is what launchers call: `qs ipc call deepfake show` never reaches show(), because the qs 0.3 CLI parses
+    // "show" as its own `ipc show` subcommand (lists targets, exits 0). show() stays for older callers.
+    IpcHandler { target: "deepfake"; function open(): void { root.opened = true } function show(): void { root.opened = true } function toggle(): void { root.opened = !root.opened } }
 
     component Label: Text { color: Galaxy.ink; font.family: Galaxy.font; font.pixelSize: 13; textFormat: Text.PlainText; wrapMode: Text.Wrap; Layout.fillWidth: true }
     component Hint: Label { color: Galaxy.muted; font.pixelSize: 11 }
@@ -179,6 +178,19 @@ ShellRoot {
         minimumSize: Qt.size(760, 560)
         Timer { interval: 2500; running: !!Quickshell.env("DEEPFAKE_UI_SCREENSHOT"); onTriggered: frame.grabToImage(function(result) { result.saveToFile(Quickshell.env("DEEPFAKE_UI_SCREENSHOT")); if (Quickshell.env("DEEPFAKE_UI_SCREENSHOT_QUIT")) Qt.quit() }) }
         onClosed: root.opened = false
+        // File dialogs live inside the window with an explicit parentWindow: declared on ShellRoot (no window)
+        // they never open under Quickshell (visible stays false), which is why Browse did nothing.
+        FileDialog { id: imagePicker; parentWindow: window.contentItem.Window.window; title: "Choose a reference image"
+            currentFolder: "file://" + Quickshell.env("HOME") + "/Pictures"
+            nameFilters: ["Reference images (*.png *.jpg *.jpeg *.webp)", "All files (*)"]; onAccepted: importPath.text = root.path(selectedFile) }
+        FileDialog { id: outputPicker; parentWindow: window.contentItem.Window.window; title: "Save recording as"; fileMode: FileDialog.SaveFile
+            currentFolder: "file://" + Quickshell.env("HOME") + "/Videos"; defaultSuffix: "mp4"
+            nameFilters: ["MP4 video (*.mp4)"]; onAccepted: { outputPath.text = root.path(selectedFile); root.edit("recording_path", outputPath.text) } }
+        FileDialog { id: videoPicker; parentWindow: window.contentItem.Window.window; title: "Choose an input video"
+            currentFolder: "file://" + Quickshell.env("HOME") + "/Videos"
+            nameFilters: ["Video (*.mp4 *.mkv *.mov *.avi *.webm)", "All files (*)"]; onAccepted: { videoPath.text = root.path(selectedFile); root.edit("input_video", videoPath.text) } }
+        Timer { interval: 800; running: !!Quickshell.env("DEEPFAKE_UI_TEST_DIALOG")
+            onTriggered: { imagePicker.open(); Qt.callLater(() => console.log("DIALOG visible=" + imagePicker.visible)) } }
         Shortcut { sequence: "Ctrl+Q"; onActivated: { if (root.active) root.call("stop"); root.opened = false } }
         Shortcut { sequence: "Ctrl+S"; onActivated: root.save() }
         Shortcut { sequence: "F11"; onActivated: root.expanded = !root.expanded }

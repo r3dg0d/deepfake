@@ -868,9 +868,12 @@ def app_cmd():
     env = dict(os.environ)
     # Quickshell actions must resolve the same installed package as this CLI.
     env.setdefault("DEEPFAKE_CLI", os.environ.get("DEEPFAKE_EXECUTABLE", "deepfake"))
-    shown = subprocess.run([qs, "ipc", "-p", str(shell), "call", "deepfake", "show"],
-                           env=env, capture_output=True, check=False)
-    if shown.returncode == 0:
+    # An already-running widget is raised through IPC. Call `open`, not `show`: qs parses "show" as its own
+    # `ipc show` subcommand, prints the targets and exits 0 without calling anything (the launcher then did
+    # nothing). qs exits 0 when an instance took the call, non-zero when none is running.
+    shown = subprocess.run([qs, "ipc", "-p", str(shell), "call", "deepfake", "open"],
+                           env=env, capture_output=True, text=True, check=False)
+    if shown.returncode == 0 and "target deepfake" not in shown.stdout:
         return
     subprocess.run([qs, "-n", "-d", "-p", str(shell)], env=env, check=True)
 

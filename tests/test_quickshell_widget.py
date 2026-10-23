@@ -57,3 +57,16 @@ def test_control_center_renders_without_warnings(tmp_path, page, size):
     warnings = [line for line in log.splitlines() if ("WARN" in line or "ERROR" in line) and "window masks" not in line]
     assert not warnings, "\n".join(warnings)
     assert shot.is_file() and shot.stat().st_size > 10_000
+
+
+@pytest.mark.skipif(QS is None, reason="quickshell not installed")
+def test_browse_dialog_opens(tmp_path):
+    """Browse… must open a file dialog: declared on ShellRoot (no window) it never became visible."""
+    fake = tmp_path / "fake-deepfake"
+    (tmp_path / "snap.json").write_text(json.dumps({**SNAPSHOT, "state_dir": str(tmp_path)}))
+    fake.write_text(f"#!/bin/sh\ncat {tmp_path / 'snap.json'}\n")
+    fake.chmod(0o755)
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "DEEPFAKE_CLI": str(fake), "DEEPFAKE_UI_TEST_DIALOG": "1",
+           "DEEPFAKE_UI_SCREENSHOT": str(tmp_path / "s.png"), "DEEPFAKE_UI_SCREENSHOT_QUIT": "1"}
+    r = subprocess.run([QS, "-p", str(SHELL_DIR)], env=env, capture_output=True, text=True, timeout=60)
+    assert "DIALOG visible=true" in r.stdout + r.stderr, (r.stdout + r.stderr)[-2000:]
