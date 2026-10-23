@@ -188,9 +188,9 @@ ShellRoot {
             id: frame
             anchors.fill: parent
             radius: root.expanded ? 0 : Galaxy.radiusWindow
-            border.width: root.expanded ? 0 : 1; border.color: Galaxy.edge
-            gradient: Gradient { GradientStop { position: 0; color: "#120c24" } GradientStop { position: 1; color: Galaxy.void_ } }
-            Starfield { anchors.fill: parent; anchors.margins: 1; cornerRadius: frame.radius; seed: 11 }
+            color: "transparent"
+            Starfield { anchors.fill: parent; cornerRadius: frame.radius; seed: 11; paintBase: true }
+            Rectangle { anchors.fill: parent; radius: frame.radius; color: "transparent"; border.width: root.expanded ? 0 : 1; border.color: Galaxy.edge }
 
             RowLayout {
                 anchors.fill: parent; anchors.margins: root.expanded ? 0 : 14; spacing: 14
