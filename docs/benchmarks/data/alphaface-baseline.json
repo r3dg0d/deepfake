@@ -1,0 +1,105 @@
+{
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "torch": "2.14.1+cu130",
+  "camera_fps": 30.0,
+  "target_fps": 60.0,
+  "swap_precision": "bf16",
+  "framegen_backend": "rife 4.25",
+  "results": {
+    "720p": {
+      "swap_only": {
+        "swap_fps": 32.1,
+        "swap_ms_p50": 35.93,
+        "swap_ms_p95": 45.14,
+        "peak_vram_mb_torch": 1129.2
+      },
+      "framegen_only_2x": {
+        "backend": "rife",
+        "variant": "4.25",
+        "resolution": "1280x720",
+        "factor": 2,
+        "ms_per_generated_frame": 6.331,
+        "ms_per_source_interval": 6.331,
+        "generated_fps_capacity": 157.5,
+        "peak_vram_mb": 307.0,
+        "samples": 80,
+        "ms_p95": 7.009,
+        "flow_scale": 1.0
+      },
+      "framegen_only_3x": {
+        "backend": "rife",
+        "variant": "4.25",
+        "resolution": "1280x720",
+        "factor": 3,
+        "ms_per_generated_frame": 5.961,
+        "ms_per_source_interval": 11.921,
+        "generated_fps_capacity": 167.4,
+        "peak_vram_mb": 315.7,
+        "samples": 80,
+        "ms_p95": 12.689,
+        "flow_scale": 1.0
+      },
+      "pipeline_no_framegen": {
+        "input_fps": 30.0,
+        "swap_fps": 29.6,
+        "output_fps": 29.8,
+        "sink_fps": 29.8,
+        "swap_latency_ms": 24.9,
+        "framegen_ms_per_frame": null,
+        "dropped_source_frames": 0,
+        "gpu_util_pct": 53.0,
+        "vram_used_mb": 5329.5,
+        "total_latency_ms": 25.8,
+        "peak_vram_mb_torch": 1128.5
+      },
+      "pipeline_framegen_2x": {
+        "input_fps": 30.0,
+        "swap_fps": 29.2,
+        "output_fps": 56.0,
+        "sink_fps": 58.1,
+        "swap_latency_ms": 24.5,
+        "framegen_ms_per_frame": 5.6,
+        "dropped_source_frames": 0,
+        "gpu_util_pct": 63.0,
+        "vram_used_mb": 5808.6875,
+        "total_latency_ms": 74.0,
+        "generated_frames": 59,
+        "keyframes": 60,
+        "held_frames": 2,
+        "late_dropped": 2,
+        "queue_depth": 0,
+        "pacer_delay_ms": 81.8,
+        "framegen_shed_level": 0,
+        "peak_vram_mb_torch": 1291.3
+      },
+      "pipeline_framegen_3x": {
+        "input_fps": 30.1,
+        "swap_fps": 29.3,
+        "output_fps": 84.6,
+        "sink_fps": 87.7,
+        "swap_latency_ms": 23.0,
+        "framegen_ms_per_frame": 6.0,
+        "dropped_source_frames": 0,
+        "gpu_util_pct": 82.0,
+        "vram_used_mb": 5838.6875,
+        "total_latency_ms": 75.9,
+        "generated_frames": 118,
+        "keyframes": 60,
+        "held_frames": 3,
+        "late_dropped": 3,
+        "queue_depth": 0,
+        "pacer_delay_ms": 74.2,
+        "framegen_shed_level": 0,
+        "peak_vram_mb_torch": 1347.1
+      }
+    }
+  },
+  "recommendation": {
+    "720p": {
+      "mode": "2x",
+      "expected_output_fps": 56.0,
+      "added_latency_ms": 48.2,
+      "reason": "measured 56.0 new frames/s, 1.7% held slots"
+    }
+  }
+}

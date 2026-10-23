@@ -233,6 +233,7 @@ class DeepfakeSession:
             "state": "running" if self.mode != "video" else "processing",
             "source_fps": snap.get("input_fps"),
             "alphaface_fps": snap.get("swap_fps"),
+            "native_inference_fps": snap.get("swap_fps"),
             "output_fps": snap.get("output_fps") or snap.get("sink_fps"),
             "latency_ms": snap.get("total_latency_ms") or snap.get("swap_latency_ms"),
             "vram_mb": snap.get("vram_used_mb"),
@@ -244,6 +245,8 @@ class DeepfakeSession:
             "framegen_enabled": bool(self.frame_gen.enabled),
             "framegen_multiplier": factor,
             "dropped_source_frames": snap.get("dropped_source_frames"),
+            "queue_depth": snap.get("queue_depth"),
+            "latency_p95_ms": snap.get("latency_p95_ms"),
             "uptime_s": round(time.monotonic() - self._t0, 1),
             "frames": (snap.get("keyframes") or 0) + (gen or 0) if gen is not None else snap.get("frames"),
         }
@@ -282,4 +285,5 @@ class DeepfakeSession:
         try:
             self.widget.stop()
         finally:
-            self.bus.close(state="stopped")
+            failed = self.bus.snapshot().get("state") == "error"
+            self.bus.close(state="error" if failed else "stopped")

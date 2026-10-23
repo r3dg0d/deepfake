@@ -21,7 +21,7 @@ from .identity import list_fakeperson_identities, resolve_source_image
 from .models import install_model, list_models
 from .outputs.sinks import create_sink
 from .paths import ensure_dirs
-from .pipeline import build_config, run_loop
+from .pipeline import build_config
 from .presets import PRESET_ALIASES, PRESETS
 from .session import DeepfakeSession, resolve_frame_gen, try_init_framegen
 
@@ -61,6 +61,12 @@ def _common_io_options(fn):
         click.option("--color-match/--no-color-match", default=None),
         click.option("--temporal-smooth", type=float, default=None),
         click.option("--backend", type=click.Choice(["auto", "alphaface", "inswapper", "passthrough"]), default="auto"),
+        click.option("--engine", type=click.Choice(["alphaface", "experimental"]), default="alphaface"),
+        click.option("--mode", type=click.Choice(["face", "head", "fullbody"]), default=None),
+        click.option("--model-backend", type=click.Choice(["liveportrait", "personalive", "editalive"]), default=None),
+        click.option("--reference", type=click.Path(path_type=Path, exists=True), default=None),
+        click.option("--prompt", default="", help="Appearance instruction for EditaLive offline rendering."),
+        click.option("--encoder", type=click.Choice(["auto", "libx264", "h264_nvenc"]), default=None),
         click.option("--watermark/--no-watermark", default=None),
         click.option("--consent-ack", is_flag=True, hidden=True),
         click.option("--preview/--no-preview", default=None, help="OpenCV/file preview frames (default: on)."),
@@ -161,6 +167,12 @@ def _resolve_source(source_path: Path | None, identity: str | None) -> Path:
     return p
 
 
+def _source_from_kwargs(kwargs):
+    if kwargs.get("reference") and kwargs.get("source_path"):
+        raise click.UsageError("Choose --reference or -f/--source, not both")
+    return _resolve_source(kwargs.get("reference") or kwargs.get("source_path"), kwargs.get("identity"))
+
+
 def _apply_config_defaults(kwargs: dict) -> dict:
     cfg = ensure_default_config()
     if kwargs.get("preset") is None:
@@ -215,6 +227,10 @@ def _cfg_from_kwargs(kwargs: dict):
     cfg = build_config(
         preset,
         device=device,
+        engine=kwargs.get("engine", "alphaface"),
+        mode=kwargs.get("mode") or ("head" if kwargs.get("engine") == "experimental" else "face"),
+        model_backend=kwargs.get("model_backend") or ("liveportrait" if kwargs.get("engine") == "experimental" and kwargs.get("mode") != "fullbody" else None),
+        preview_original=bool(kwargs.get("preview", True)),
         backend=backend,
         face_index=kwargs.get("face_index") or 0,
         multi_face=kwargs.get("multi_face"),
@@ -258,6 +274,7 @@ def _make_sink(kwargs: dict, cfg, fps: float | None = None, size: tuple[int, int
         fps=float(fps or cfg.preset.fps),
         audio_from=kwargs.get("audio_from"),
         encoder=kwargs.get("encoder") or "auto",
+        realtime_recording=bool(kwargs.get("_realtime_recording")),
     )
 
 
@@ -267,7 +284,6 @@ def _widget_flag(kwargs: dict) -> bool | None:
 
 def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
     """Webcam / virtualcam: session + FrameGen auto + Quickshell."""
-    from .realtime import run_realtime
 
     session = DeepfakeSession(
         mode,
@@ -278,6 +294,22 @@ def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
         widget=_widget_flag(kwargs),
     )
     session.start()
+    try:
+        return _run_live_started(kwargs, source, cfg, mode=mode, session=session)
+    except Exception as e:
+        session.bus.update(state="error", error=str(e))
+        raise
+    finally:
+        session.close()
+
+
+def _run_live_started(kwargs, source, cfg, *, mode, session):
+    from .realtime import run_realtime
+
+    kwargs["_realtime_recording"] = True
+
+    session.bus.update(engine=cfg.engine, backend=cfg.model_backend or cfg.backend or "alphaface",
+                       transformation_mode=cfg.mode, output_video=str(kwargs.get("output_video") or ""))
     fg = _fg_from_kwargs(kwargs, float(cfg.preset.fps))
     # Probe FrameGen early so we can fall back without aborting the session.
     if fg.enabled:
@@ -320,8 +352,6 @@ def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
         )
     except KeyboardInterrupt:
         return
-    finally:
-        session.close()
     click.echo("final: " + json.dumps(final), err=True)
 
 
@@ -375,7 +405,7 @@ def webcam_cmd(**kwargs):
     """Live webcam face swap (FrameGen + Quickshell on by default)."""
     kwargs = _apply_config_defaults(kwargs)
     require_consent(ack=kwargs.get("consent_ack", False), watermark=kwargs.get("watermark", True))
-    source = _resolve_source(kwargs.get("source_path"), kwargs.get("identity"))
+    source = _source_from_kwargs(kwargs)
     cfg = _cfg_from_kwargs(kwargs)
     try:
         _run_live(kwargs, source, cfg, mode="webcam")
@@ -401,7 +431,7 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
     if path is None:
         raise click.UsageError("Provide an input video: deepfake video -i input.mp4 -f face.png -o out.mp4")
     require_consent(ack=kwargs.get("consent_ack", False), watermark=kwargs.get("watermark", True))
-    source = _resolve_source(kwargs.get("source_path"), kwargs.get("identity"))
+    source = _source_from_kwargs(kwargs)
     cfg = _cfg_from_kwargs(kwargs)
     if kwargs.get("output_video") is None and not kwargs.get("ffmpeg_out"):
         kwargs["output_video"] = path.with_name(path.stem + "-deepfake.mp4")
@@ -411,6 +441,8 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
     out = kwargs.get("output_video")
     if out is not None and Path(out).resolve() == path.resolve():
         raise click.ClickException("refusing to overwrite the input video; pick a different -o")
+    if cfg.engine == "experimental" and cfg.model_backend != "liveportrait":
+        return _run_experimental_video(path, source, cfg, kwargs)
 
     import cv2
 
@@ -422,7 +454,7 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
     probe.release()
 
     kwargs["audio_from"] = path
-    kwargs["encoder"] = ensure_default_config().encoder
+    kwargs["encoder"] = kwargs.get("encoder") or ensure_default_config().encoder
     session = DeepfakeSession(
         "video",
         source_face=source,
@@ -444,11 +476,6 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
         session.apply_frame_gen(fg)
 
     try:
-        if not fg.enabled:
-            sink = _make_sink(kwargs, cfg)
-            session.mark_running()
-            run_loop(str(path), source, sink, cfg)
-            return
         from .realtime import run_offline
 
         session.mark_running()
@@ -465,6 +492,8 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
             cfg,
             fg,
             print_stats=bool(kwargs.get("show_metrics", True)),
+            on_stats=progress_hook,
+            stop_requested=session.stop_requested,
         )
         if total > 0 and summary.get("source_frames"):
             session.publish_video_progress(
@@ -503,7 +532,7 @@ def virtualcam_cmd(v4l2_path: str | None, **kwargs):
     if not os.access(target, os.W_OK):
         raise click.ClickException(f"{target} is not writable by you (need the 'video' group)")
     require_consent(ack=kwargs.get("consent_ack", False), watermark=kwargs.get("watermark", True))
-    source = _resolve_source(kwargs.get("source_path"), kwargs.get("identity"))
+    source = _source_from_kwargs(kwargs)
     kwargs["output_device"] = target
     click.echo(f"deepfake: virtual camera → {target}", err=True)
     if kwargs.get("preview") is None:
@@ -628,8 +657,11 @@ def models_group():
 
 @models_group.command("list")
 @click.option("--json", "as_json", is_flag=True)
-def models_list(as_json: bool):
+@click.option("--experimental", is_flag=True)
+def models_list(as_json: bool, experimental: bool):
     rows = list_models()
+    if experimental:
+        rows = [r for r in rows if r.meta.get("experimental")]
     if as_json:
         click.echo(
             json.dumps(
@@ -657,6 +689,211 @@ def models_install(model: str, yes: bool):
     except (KeyError, RuntimeError) as e:
         raise click.ClickException(str(e)) from e
     click.echo(msg)
+
+
+@models_group.command("info")
+@click.argument("model")
+def models_info(model):
+    row = next((r for r in list_models() if r.name == model), None)
+    if row is None:
+        raise click.ClickException(f"Unknown model {model}")
+    click.echo(json.dumps({"name": row.name, "installed": row.installed, **row.meta}, indent=2))
+
+
+@models_group.command("verify")
+@click.argument("model")
+def models_verify(model):
+    from .models import verify_model
+
+    try:
+        result = verify_model(model)
+    except (KeyError, ValueError) as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(json.dumps(result, indent=2))
+    if not result["ok"]:
+        raise click.ClickException("Checkpoint integrity verification failed or unavailable")
+
+
+@models_group.command("remove")
+@click.argument("model")
+@click.option("--yes", is_flag=True)
+def models_remove(model, yes):
+    from .models import remove_model
+
+    try:
+        click.echo(remove_model(model, yes=yes))
+    except (KeyError, RuntimeError) as e:
+        raise click.ClickException(str(e)) from e
+
+
+@main.group("experimental")
+def experimental_group():
+    """Inspect and configure optional, isolated character engines."""
+
+
+@experimental_group.command("list-backends")
+def experimental_list():
+    from .engines import engine_status
+
+    click.echo(json.dumps([r for r in engine_status() if r["engine"] == "experimental"], indent=2))
+
+
+experimental_group.add_command(experimental_list, "capabilities")
+experimental_group.add_command(experimental_list, "doctor")
+
+
+@experimental_group.command("configure")
+@click.option("--backend", required=True, type=click.Choice(["liveportrait", "personalive", "editalive"]))
+@click.option("--checkout", required=True, type=click.Path(path_type=Path, exists=True, file_okay=False))
+@click.option("--python", "python_path", default=None, type=click.Path(path_type=Path, exists=True))
+def experimental_configure(backend, checkout, python_path):
+    from .engines.experimental.adapters import configure_backend
+
+    try:
+        if python_path is None:
+            if backend != "liveportrait":
+                raise ValueError("PersonaLive and EditaLive require --python pointing to an isolated environment")
+            python_path = Path(sys.executable)
+        configure_backend(backend, checkout, python_path)
+    except (ValueError, OSError) as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(f"Configured {backend}; run experimental doctor and models verify {backend} before rendering.")
+
+
+@main.command("app")
+def app_cmd():
+    """Open the Quickshell control center without activating a camera."""
+    import subprocess
+
+    from .widget import find_qs, widget_shell_dir
+
+    qs, shell = find_qs(), widget_shell_dir()
+    if not qs or shell is None:
+        raise click.ClickException("Install Quickshell and the packaged deepfake/quickshell assets")
+    env = dict(os.environ)
+    # Quickshell actions must resolve the same installed package as this CLI.
+    env.setdefault("DEEPFAKE_CLI", os.environ.get("DEEPFAKE_EXECUTABLE", "deepfake"))
+    shown = subprocess.run([qs, "ipc", "-p", str(shell), "call", "deepfake", "show"],
+                           env=env, capture_output=True, check=False)
+    if shown.returncode == 0:
+        return
+    subprocess.run([qs, "-n", "-d", "-p", str(shell)], env=env, check=True)
+
+
+def _run_experimental_video(path, reference, cfg, kwargs):
+    import tempfile
+    import time
+
+    import cv2
+
+    from .engines.experimental.adapters import render
+    from .pipeline import open_capture
+    from .watermark import apply_watermark
+
+    name = cfg.model_backend or {"head": "personalive", "fullbody": "editalive"}.get(cfg.mode)
+    if name not in {"personalive", "editalive"} or (cfg.mode, name) not in {("head", "personalive"), ("fullbody", "editalive")}:
+        raise click.ClickException("Choose head + personalive or fullbody + editalive. Hybrid is not implemented.")
+    if kwargs.get("max_frames") or kwargs.get("output_fps") or kwargs.get("frame_gen") not in {None, "auto", "off"}:
+        raise click.ClickException("Offline research adapters do not yet support frame limits or RIFE. Use --frame-gen off.")
+    session = DeepfakeSession("video", source_face=reference, widget=_widget_flag(kwargs))
+    session.start()
+    session.bus.update(engine="experimental", backend=name, transformation_mode=cfg.mode)
+    sink = cap = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="deepfake-render-") as folder:
+            generated, summary = render(name, reference, path.resolve(), Path(folder), session,
+                                        prompt=kwargs.get("prompt", ""), fps=25 if name == "personalive" else 16)
+            cap = open_capture(str(generated))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25
+            size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+            kwargs["audio_from"] = path
+            sink = _make_sink(kwargs, cfg, fps=fps, size=size)
+            frames = 0
+            start = time.monotonic()
+            while True:
+                if session.stop_requested():
+                    raise InterruptedError("Render export cancelled")
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                sink.write(apply_watermark(frame, enabled=cfg.watermark))
+                frames += 1
+            summary.update(output_frames=frames, output_timeline_fps=fps, export_wall_s=time.monotonic() - start,
+                           streaming=False, framegen=False)
+            summary.setdefault("native_inference_fps", None)
+            session.bus.update(progress_pct=100, frames=frames)
+            click.echo(json.dumps(summary, indent=2))
+    except (RuntimeError, InterruptedError) as e:
+        session.bus.update(error=str(e), state="error")
+        raise click.ClickException(str(e)) from e
+    finally:
+        if cap is not None:
+            cap.release()
+        try:
+            if sink is not None:
+                sink.close()
+        finally:
+            session.close()
+
+
+@main.group("desktop")
+def desktop_group():
+    """Quickshell control center bridge (protocol v1)."""
+
+
+@desktop_group.command("request")
+@click.argument("message")
+def desktop_request(message):
+    from .desktop import request
+
+    try:
+        response = request(json.loads(message))
+        click.echo(json.dumps({"ok": True, **response}))
+    except (ValueError, KeyError, RuntimeError, OSError) as e:
+        click.echo(json.dumps({"ok": False, "error": str(e)}))
+
+
+@desktop_group.command("install")
+@click.option("--executable", required=True, type=click.Path(path_type=Path, exists=True))
+def desktop_install(executable):
+    """Update the existing launcher and Quickshell assets, with a backup."""
+    from .desktop import install_desktop
+
+    try:
+        click.echo(json.dumps(install_desktop(executable), indent=2))
+    except (ValueError, OSError) as e:
+        raise click.ClickException(str(e)) from e
+
+
+@desktop_group.command("model-job", hidden=True)
+@click.argument("action", type=click.Choice(["install_model", "verify_model", "remove_model"]))
+@click.argument("model")
+def desktop_model_job(action, model):
+    from .experimental_models import install, manifests
+    from .ipc import state_dir, write_json_atomic
+    from .models import remove_model, verify_model
+
+    path = state_dir() / "model-job.json"
+    status = {"state": "running", "action": action, "model": model, "pid": os.getpid()}
+    write_json_atomic(path, status)
+
+    def progress(filename, done, total):
+        status.update(file=filename, bytes=done, total_bytes=total)
+        write_json_atomic(path, status)
+
+    try:
+        if action == "install_model":
+            result = install(model, yes=True, progress=progress) if model in manifests() else install_model(model, yes=True)
+        elif action == "verify_model":
+            result = verify_model(model)
+            if not result["ok"]:
+                raise RuntimeError(str(result))
+        else:
+            result = remove_model(model, yes=True)
+        status.update(state="complete", result=result)
+    except Exception as e:
+        status.update(state="error", error=str(e))
+    write_json_atomic(path, status)
 
 
 if __name__ == "__main__":

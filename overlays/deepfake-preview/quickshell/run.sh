@@ -21,7 +21,10 @@ start() {
   fi
   [ -n "${DEEPFAKE_DRY:-}" ] && { echo "dry run: deepfake ${args[*]}"; exit 0; }
   mkdir -p "$(dirname "$log")"; echo "== $(date '+%F %r') deepfake ${args[*]}" >>"$log"
-  setsid "$df" "${args[@]}" </dev/null >>"$log" 2>&1 &
+  # deepfake's session start calls cleanup_orphans(), which runs `qs kill -p <widget dir>`
+  # and kills THIS widget (looked like a crash). The widget is ours here (--no-widget), so
+  # point the tool's Quickshell binary at noqs.sh for this session: its kill becomes a no-op.
+  DEEPFAKE_QS="$dir/noqs.sh" setsid "$df" "${args[@]}" </dev/null >>"$log" 2>&1 &
   echo "Starting webcam${1:+ + virtual cam ($vdev)}…"
 }
 stop() { local s; s=$(sid); [ -n "$s" ] || { echo "No active session"; return 0; }; python3 "$dir/control.py" "$s"; }

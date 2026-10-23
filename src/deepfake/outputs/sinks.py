@@ -27,10 +27,9 @@ class NullSink:
 class PreviewSink:
     """Wayland-friendly preview: JPEG + stats JSON for Quickshell overlay."""
 
-    def __init__(self, title: str = "deepfake") -> None:
+    def __init__(self, title: str = "deepfake", *, filename: str = "preview.png", publish_stats: bool = True) -> None:
         import os
         import time
-        from pathlib import Path as P
 
         self.title = title
         self._use_cv = os.environ.get("DEEPFAKE_OPENCV_PREVIEW", "").strip() in ("1", "true", "yes")
@@ -39,10 +38,13 @@ class PreviewSink:
             import cv2
 
             self._cv2 = cv2
-        self._dir = P.home() / ".local/state/deepfake"
+        from ..ipc import state_dir
+
+        self._dir = state_dir()
         self._dir.mkdir(parents=True, exist_ok=True)
-        self._frame_path = self._dir / "preview.png"
-        self._tmp_path = self._dir / "preview.png.tmp"
+        self._frame_path = self._dir / filename
+        self._tmp_path = self._dir / (Path(filename).stem + ".tmp.png")
+        self._publish_stats = publish_stats
         self._stats_path = self._dir / "preview.json"
         self._times: list[float] = []
         self._frames = 0
@@ -51,7 +53,6 @@ class PreviewSink:
         self._min_interval = 1.0 / 20.0
 
     def write(self, frame_bgr: np.ndarray) -> None:
-        import json
         import os
         import time
 
@@ -82,19 +83,14 @@ class PreviewSink:
         if w > max_w:
             scale = max_w / float(w)
             out = cv2.resize(frame_bgr, (int(w * scale), int(h * scale)))
-        ok = False
-        try:
-            ok = bool(cv2.imwrite(str(self._tmp_path), out))
-        except Exception:
-            ok = False
+        ok = bool(cv2.imwrite(str(self._tmp_path), out))
         if not ok:
-            # headless opencv builds often lack jpeg/png writers — use Pillow
-            from PIL import Image
-            rgb = cv2.cvtColor(out, cv2.COLOR_BGR2RGB)
-            Image.fromarray(rgb).save(self._tmp_path, format="PNG")
-            ok = True
+            raise RuntimeError("OpenCV failed to encode preview.png")
         if ok:
             os.replace(self._tmp_path, self._frame_path)
+            self._frame_path.chmod(0o600)
+        if not self._publish_stats:
+            return
         stats = {
             "active": True,
             "fps": round(fps, 1),
@@ -104,10 +100,15 @@ class PreviewSink:
             "path": str(self._frame_path),
             "uptime_s": round(now - self._t0, 1),
             "title": self.title,
-            "ts": now,
+            "ts": time.time(),
         }
-        newline = chr(10)
-        self._stats_path.write_text(json.dumps(stats) + newline)
+        from ..ipc import read_json, write_json_atomic
+
+        # Do not overwrite session metrics published by SessionBus.
+        previous = read_json(self._stats_path)
+        if isinstance(previous, dict) and "session" in previous:
+            stats["session"] = previous["session"]
+        write_json_atomic(self._stats_path, stats)
 
     def close(self) -> None:
         if self._use_cv and self._cv2 is not None:
@@ -115,6 +116,8 @@ class PreviewSink:
                 self._cv2.destroyWindow(self.title)
             except Exception:
                 pass
+        if not self._publish_stats:
+            return
         try:
             import json
 
@@ -426,6 +429,45 @@ class MultiSink:
             s.close()
 
 
+class LiveRecordingSink:
+    """Keep a constant-rate recording on wall time when inference drops input.
+
+    Held recording frames are repeats, never native inference or RIFE frames.
+    Other outputs are unaffected. Offline export bypasses this adapter entirely.
+    """
+
+    def __init__(self, sink, fps, *, clock=None):
+        import time
+
+        self.sink, self.fps = sink, fps
+        self.clock = clock or time.monotonic
+        self.started = None
+        self.index = -1
+        self.last = None
+        self.held_frames = 0
+
+    def write(self, frame_bgr):
+        now = self.clock()
+        if self.started is None:
+            self.started = now
+        target = round((now - self.started) * self.fps)
+        if target - self.index > self.fps * 5:
+            raise RuntimeError("Recording stalled for more than five seconds; stop and restart the session")
+        if target <= self.index:
+            self.last = frame_bgr
+            return
+        while self.index + 1 < target:
+            self.sink.write(self.last if self.last is not None else frame_bgr)
+            self.index += 1
+            self.held_frames += 1
+        self.sink.write(frame_bgr)
+        self.index += 1
+        self.last = frame_bgr
+
+    def close(self):
+        self.sink.close()
+
+
 def create_sink(
     *,
     preview: bool = True,
@@ -438,19 +480,19 @@ def create_sink(
     fps: float = 30.0,
     audio_from: Path | str | None = None,
     encoder: str = "auto",
+    realtime_recording: bool = False,
 ) -> OutputSink:
     sinks: list[OutputSink] = []
     if preview:
         sinks.append(PreviewSink())
     if output_video is not None:
         try:
-            sinks.append(
-                FFmpegVideoSink(
+            recording = FFmpegVideoSink(
                     output_video, fps, (width, height), audio_from=audio_from, encoder=encoder
                 )
-            )
         except Exception:
-            sinks.append(VideoFileSink(output_video, fps, (width, height)))
+            recording = VideoFileSink(output_video, fps, (width, height))
+        sinks.append(LiveRecordingSink(recording, fps) if realtime_recording else recording)
     if ffmpeg_args:
         sinks.append(FFmpegPipeSink(ffmpeg_args, width, height, fps))
     if gstreamer_pipeline:

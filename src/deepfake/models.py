@@ -125,6 +125,15 @@ def list_models() -> list[ModelInfo]:
         out.append(
             ModelInfo(name=name, installed=bool(is_in), meta=meta, path=path if path.exists() else None)
         )
+    from .experimental_models import manifests
+
+    for name, meta in manifests().items():
+        path = models_dir() / name
+        present = bool(meta["files"]) and not meta.get("blocked") and all(
+            (path / f["path"]).is_file() and (path / f["path"]).stat().st_size == f["size"] for f in meta["files"])
+        out.append(ModelInfo(name=name, installed=present, meta={**meta, "experimental": True,
+                            "size_hint": f"{sum(f['size'] for f in meta['files']) / 2**30:.2f} GiB"},
+                             path=path if path.exists() else None))
     return out
 
 
@@ -166,7 +175,8 @@ def _gdown_or_curl(file_id: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_suffix(dest.suffix + ".part")
     if shutil.which("gdown"):
-        cmd = ["gdown", "--id", file_id, "-O", str(part)]
+        # gdown >=5 dropped --id in favor of a positional url_or_id.
+        cmd = ["gdown", file_id, "-O", str(part)]
         subprocess.run(cmd, check=True)
         part.rename(dest)
         return
@@ -185,6 +195,10 @@ def _gdown_or_curl(file_id: str, dest: Path) -> None:
 
 
 def install_model(name: str, *, yes: bool = False) -> str:
+    from .experimental_models import install, manifests
+
+    if name in manifests():
+        return install(name, yes=yes)
     if name not in CATALOG:
         raise KeyError(f"unknown model '{name}'. Known: {', '.join(sorted(CATALOG))}")
     meta = CATALOG[name]
@@ -208,6 +222,40 @@ def install_model(name: str, *, yes: bool = False) -> str:
     if name == "rife":
         return _install_rife(target)
     raise RuntimeError(f"no installer for {name}")
+
+
+def verify_model(name: str, progress=None) -> dict[str, Any]:
+    from .experimental_models import manifests, verify
+
+    if name in manifests():
+        return verify(name, progress=progress)
+    if name not in CATALOG:
+        raise KeyError(f"Unknown model {name}")
+    recorded = _load_installed().get(name, {}).get("checksums", {})
+    if not recorded:
+        return {"name": name, "ok": False, "status": "No recorded integrity hashes; reinstall to verify"}
+    failures = [f for f, digest in recorded.items()
+                if not (models_dir() / name / f).is_file() or file_sha256(models_dir() / name / f) != digest]
+    return {"name": name, "ok": not failures, "corrupt_or_missing": failures,
+            "trust": "locally recorded at installation"}
+
+
+def remove_model(name: str, *, yes: bool = False) -> str:
+    known = {m.name for m in list_models()}
+    if name not in known:
+        raise KeyError(f"Unknown model {name}")
+    if not yes:
+        raise RuntimeError(f"Removing {name} requires --yes")
+    target = models_dir() / name
+    if target.is_symlink():
+        raise RuntimeError("Refusing to remove a symlinked model directory")
+    shutil.rmtree(target, ignore_errors=False) if target.exists() else None
+    data = _load_installed()
+    data.pop(name, None)
+    from .ipc import write_json_atomic
+
+    write_json_atomic(_installed_marker(), data)
+    return f"Removed {name}"
 
 
 def _install_alphaface(target: Path, meta: dict[str, Any]) -> str:

@@ -1,0 +1,22 @@
+{
+  "backend": "liveportrait",
+  "resolution": "1280x720",
+  "frames": 60,
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "torch": "2.14.1+cu130",
+  "model_load_s": 1.6207490930009953,
+  "reference_prepare_s": 1.343599034998988,
+  "native_inference_fps": 21.0813609543232,
+  "wall_fps_including_export": 17.347255873907134,
+  "mean_latency_ms": 47.43526768346177,
+  "latency_p50_ms": 47.84399149957608,
+  "latency_p95_ms": 55.68669529902763,
+  "latency_p99_ms": 58.381836060179914,
+  "peak_vram_mb_torch": 1057.34033203125,
+  "steady_vram_mb_torch": 642.951171875,
+  "mean_pixel_change": 7.935366886091822,
+  "quality_validation": "not evaluated; synthetic translation sequence only",
+  "capture_to_sink_ms": null,
+  "framegen": false,
+  "streaming_camera_test": false
+}

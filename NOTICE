@@ -31,3 +31,17 @@ Benchmark face (src/deepfake/assets/bench_face.jpg)
   person.
 
 Do not strip upstream copyright notices when vendoring AlphaFace code.
+Experimental integrations (v0.4 development):
+- LivePortrait: Copyright (c) 2024 Kuaishou Visual Generation and Interaction Center, MIT.
+  https://github.com/KlingAIResearch/LivePortrait
+  Official source is configured separately; human animation weights are downloaded explicitly.
+  InsightFace detection weights are excluded from this adapter.
+- PersonaLive and EditaLive: GVCLab official repositories, Apache-2.0 LICENSE files and
+  model-card metadata; their READMEs also contain academic-research-only notices.
+  Base/component models have separate terms. Consult the authors for intended use.
+  https://github.com/GVCLab/PersonaLive — https://github.com/GVCLab/EditaLive
+- Wan-Animate: Wan-AI/Wan2.2-Animate-14B official model card, Apache-2.0.
+  EditaLive's compatible LoRAs are not interchangeable with Wan-Animate-2 or unrelated checkpoints.
+- No research model weights or upstream source checkouts are redistributed here.
+  Experimental manifest metadata and integration code do not relicense the referenced models.
+

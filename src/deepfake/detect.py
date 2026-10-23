@@ -38,11 +38,38 @@ class OpenCVHaarDetector(FaceDetector):
     def __init__(self, detect_width: int | None = None) -> None:
         import cv2
 
-        path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        path = self._cascade_path()
         self._cascade = cv2.CascadeClassifier(path)
         if self._cascade.empty():
             raise RuntimeError(f"failed to load Haar cascade at {path}")
         self.detect_width = detect_width or self.DETECT_WIDTH
+
+    @staticmethod
+    def _cascade_path() -> str:
+        """Locate haarcascade_frontalface_default.xml on pip and Nix installs.
+
+        PyPI's opencv-python(-headless) bundles the cascade XMLs inside the
+        package and exposes them via `cv2.data.haarcascades`. nixpkgs' opencv4
+        ships the same files under <store-path>/share/opencv4/haarcascades/
+        instead and has no `cv2.data` module, so fall back to walking up from
+        the installed cv2 package to find that sibling share/ directory.
+        """
+        import cv2
+
+        name = "haarcascade_frontalface_default.xml"
+        if hasattr(cv2, "data"):
+            return cv2.data.haarcascades + name
+
+        import pathlib
+
+        for parent in pathlib.Path(cv2.__file__).resolve().parents:
+            candidate = parent / "share" / "opencv4" / "haarcascades" / name
+            if candidate.is_file():
+                return str(candidate)
+        raise RuntimeError(
+            "could not locate haarcascade_frontalface_default.xml "
+            "(no cv2.data and no share/opencv4/haarcascades found)"
+        )
 
     def detect(self, frame_bgr: np.ndarray) -> list[FaceBox]:
         import cv2

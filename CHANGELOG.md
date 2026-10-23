@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### v0.4 development
+- Shared transformation-engine interface and AlphaFace adapter preserve the original inference implementation and CLI defaults.
+- Genuine LivePortrait head animation, pinned official weights, cached reference features and single-subject guards; measured on RTX 4090.
+- Isolated PersonaLive/EditaLive offline workers with integrity checks, cancellation, shared output sinks and disclosure. PersonaLive remains blocked by an unavailable required base checkpoint; full-body release status is explicit in STATUS.md.
+- Quickshell control center: real original/processed previews, engine controls, private character library, graphical model operations, recording/offline export, virtual-camera startup, measured performance history and themes.
+- IPC v1, session ownership lock, scoped stop controls, atomic private state and persistent GUI lifetime.
+- Fixed PNG preview encoding, offline source-rate/order preservation, startup resource cleanup, and live recording duration under dropped inference frames.
+- Package QML/icon/launcher assets in wheels and Nix; derive the Nix version from pyproject.toml. Development version is 0.4.0.dev0 pending full release acceptance.
+
 ### Security
 - The AlphaFace checkpoint is now loaded with `torch.load(..., weights_only=True)`, like the
   other checkpoints, so a tampered `.pt` cannot execute code when unpickled. Verified against

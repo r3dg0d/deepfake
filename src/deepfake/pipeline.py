@@ -24,6 +24,10 @@ if TYPE_CHECKING:
 @dataclass
 class PipelineConfig:
     preset: Preset
+    engine: str = "alphaface"
+    mode: str = "face"
+    model_backend: str | None = None
+    preview_original: bool = False
     device: str = "cpu"
     backend: str | None = None
     face_index: int = 0
@@ -191,7 +195,9 @@ def run_loop(
 ) -> None:
     import cv2
 
-    pipe = FaceSwapPipeline(cfg)
+    from .engines import create_engine
+
+    pipe = create_engine(cfg)
     pipe.set_source(load_bgr(source_image))
     cap = open_capture(capture_source)
     try:
@@ -213,6 +219,7 @@ def run_loop(
                 break
     finally:
         cap.release()
+        pipe.close()
         sink.close()
 
 

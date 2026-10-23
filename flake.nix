@@ -15,7 +15,7 @@
         # `devices` / `models list` / `--help` work without NVIDIA.
         deepfake = python.pkgs.buildPythonApplication {
           pname = "deepfake";
-          version = "0.2.1";
+          version = (builtins.fromTOML (builtins.readFile ./pyproject.toml)).project.version;
           src = ./.;
           format = "pyproject";
           nativeBuildInputs = with python.pkgs; [ hatchling ];
@@ -27,6 +27,11 @@
             opencv4
             rich
           ];
+          nativeCheckInputs = with python.pkgs; [ pytestCheckHook ];
+          postInstall = ''
+            install -Dm644 overlays/deepfake-preview/desktop/galaxy-deepfake.desktop $out/share/applications/galaxy-deepfake.desktop
+            install -Dm644 overlays/deepfake-preview/desktop/galaxy-deepfake.svg $out/share/icons/hicolor/scalable/apps/galaxy-deepfake.svg
+          '';
           meta = with pkgs.lib; {
             description = "Linux real-time face-swap CLI (AlphaFace wrapper)";
             license = licenses.mit;

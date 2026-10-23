@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import signal
 import subprocess
 import time
 from pathlib import Path
@@ -18,7 +17,10 @@ def widget_shell_dir() -> Path | None:
     candidates: list[Path] = []
     if env:
         candidates.append(Path(env))
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+    candidates.append(config_home / "quickshell" / "deepfake")
     here = Path(__file__).resolve()
+    candidates.append(here.parent / "quickshell")
     # repo overlay shipped with the package source tree
     candidates.append(here.parents[2] / "overlays" / "deepfake-preview" / "quickshell")
     candidates.append(Path.home() / "Projects" / "deepfake-preview" / "quickshell")
@@ -68,8 +70,6 @@ def _read_pidfile() -> tuple[int | None, str | None]:
 
 def cleanup_orphans(*, current_session: str | None = None) -> None:
     """Kill a leftover Quickshell instance tied to a dead Deepfake session."""
-    qs = find_qs()
-    shell = widget_shell_dir()
     pid, sid = _read_pidfile()
     if pid is not None and sid != current_session:
         try:
@@ -83,9 +83,8 @@ def cleanup_orphans(*, current_session: str | None = None) -> None:
         else:
             # live foreign process: leave it (another intentional session)
             pass
-    if qs and shell:
-        # qs kill for this config path (idempotent)
-        subprocess.run([qs, "kill", "-p", str(shell)], capture_output=True, check=False)
+    # The application window can outlive a session. Never kill a launcher-owned
+    # Quickshell process when starting inference or removing a stale pidfile.
 
 
 class WidgetHandle:
@@ -125,17 +124,6 @@ class WidgetHandle:
             return False
 
     def stop(self) -> None:
-        qs = self.qs or find_qs()
-        shell = self.shell_dir or widget_shell_dir()
-        if qs and shell:
-            subprocess.run([qs, "kill", "-p", str(shell)], capture_output=True, check=False)
-        if self.proc is not None and self.proc.poll() is None:
-            try:
-                os.killpg(self.proc.pid, signal.SIGTERM)
-            except OSError:
-                try:
-                    self.proc.terminate()
-                except OSError:
-                    pass
+        # Quickshell is a persistent control center, not a child inference sink.
         self.proc = None
         self.started = False

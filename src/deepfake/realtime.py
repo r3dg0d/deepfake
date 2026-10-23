@@ -20,16 +20,18 @@ import subprocess
 import threading
 import time
 from collections import deque
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from .engines import create_engine
 from .framegen import create_backend
 from .framegen.pacing import FrameKind, FramePacer, OutputTimeline
 from .framegen.settings import FrameGenSettings
-from .pipeline import FaceSwapPipeline, PipelineConfig, load_bgr, open_capture
+from .pipeline import PipelineConfig, load_bgr, open_capture
 from .watermark import apply_watermark
 
 
@@ -90,8 +92,11 @@ class LiveStats:
             "dropped_source_frames": self.source_dropped + self.swap_queue_dropped,
             "gpu_util_pct": self.gpu_util,
             "vram_used_mb": self.vram_used_mb,
+            "vram_total_mb": self.vram_total_mb,
         }
         if pacer is None:
+            snap["queue_depth"] = 0
+            snap["generated_frames"] = 0
             snap["total_latency_ms"] = _r(self._p50(self.direct_latency_ms))
         else:
             st = pacer.stats
@@ -107,6 +112,8 @@ class LiveStats:
                     "framegen_shed_level": self.shed_level,
                 }
             )
+        samples = list(self.direct_latency_ms) if pacer is None else list(pacer.stats.latency_ms_samples[-240:])
+        snap["latency_p95_ms"] = _r(float(np.percentile(samples, 95))) if samples else None
         return snap
 
 
@@ -205,7 +212,13 @@ class CaptureThread(threading.Thread):
         import cv2
 
         while not self._halt.is_set():
-            ok, frame = self.cap.read()
+            try:
+                ok, frame = self.cap.read()
+            except Exception:
+                with self._cv:
+                    self.eof = True
+                    self._cv.notify_all()
+                return
             t = time.monotonic()
             if not ok:
                 with self._cv:
@@ -342,7 +355,7 @@ class FrameGenWorker(threading.Thread):
         self._prev_t = t
 
 
-def run_realtime(
+def _run_realtime(
     capture_source: int | str | None,
     source_image: Path | None,
     sink,
@@ -355,6 +368,7 @@ def run_realtime(
     capture=None,
     on_stats=None,
     source_bgr: np.ndarray | None = None,
+    resources: ExitStack,
 ) -> dict[str, Any]:
     """Live loop with frame generation. Returns the final stats snapshot.
 
@@ -365,8 +379,12 @@ def run_realtime(
 
     import cv2
 
-    pipe = FaceSwapPipeline(_replace(cfg, async_detect=True))
+    pipe = create_engine(_replace(cfg, async_detect=True))
+    resources.callback(pipe.close)
     pipe.set_source(source_bgr if source_bgr is not None else load_bgr(source_image))
+    from .outputs.sinks import PreviewSink
+
+    original_preview = PreviewSink(filename="original.png", publish_stats=False) if cfg.preview_original else None
     size = (cfg.preset.width, cfg.preset.height)
     stats = LiveStats()
     backend = pacer = worker = None
@@ -377,6 +395,7 @@ def run_realtime(
     if fg.enabled:
         out_fps = fg.resolve_output_fps(source_fps)
         backend = create_backend(fg.backend, variant=fg.variant, precision=fg.precision, flow_scale=fg.flow_scale)
+        resources.callback(backend.shutdown)
         backend.initialize(*size)  # raises FrameGenUnavailable with an actionable message
 
         def write(frame: np.ndarray, index: int, kind: FrameKind) -> None:
@@ -395,6 +414,7 @@ def run_realtime(
         )
         worker = FrameGenWorker(backend, timeline, pacer, stats)
     cap = capture if capture is not None else open_capture(capture_source)
+    resources.callback(cap.release)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
     cap.set(cv2.CAP_PROP_FPS, source_fps)
@@ -416,8 +436,12 @@ def run_realtime(
             if item is None:
                 if capture.eof:
                     break
+                if on_stats is not None:
+                    on_stats(stats.snapshot(pacer))
                 continue
             t_cap, frame = item
+            if original_preview is not None:
+                original_preview.write(frame)
             t0 = time.perf_counter()
             out, _ = pipe.swap_frame(frame)
             stats.swap_ms.append((time.perf_counter() - t0) * 1000)
@@ -445,18 +469,27 @@ def run_realtime(
     finally:
         capture.stop()
         if worker is not None:
-            worker.inbox.put(None)
+            while worker.is_alive():
+                try:
+                    worker.inbox.put(None, timeout=0.1)
+                    break
+                except queue.Full:
+                    continue
             worker.join(timeout=5)
         if pacer is not None:
             pacer.stop(drain=True)
         gpu.stop()
-        cap.release()
-        pipe.close()
+        capture.join(timeout=1)
+        gpu.join(timeout=1)
         final = stats.snapshot(pacer)
-        if backend is not None:
-            backend.shutdown()
-        sink.close()
     return final
+
+
+def run_realtime(capture_source, source_image, sink, cfg, fg, **kwargs):
+    """Run the bounded live pipeline, releasing resources even if startup fails."""
+    with ExitStack() as resources:
+        resources.callback(sink.close)
+        return _run_realtime(capture_source, source_image, sink, cfg, fg, resources=resources, **kwargs)
 
 
 def run_offline(
@@ -467,22 +500,37 @@ def run_offline(
     fg: FrameGenSettings | None,
     *,
     print_stats: bool = True,
+    on_stats=None,
+    stop_requested=None,
 ) -> dict[str, Any]:
     """Deterministic file → file processing (optionally frame-generated).
 
     Source timestamps come from the file's frame rate, so the output timeline
     is exact: ``output_fps = source_fps × factor`` (or ``--output-fps``).
     """
+
+    with ExitStack() as resources:
+        return _run_offline(input_video, source_image, sink_factory, cfg, fg, print_stats=print_stats,
+                            on_stats=on_stats, stop_requested=stop_requested, resources=resources)
+
+
+def _run_offline(input_video, source_image, sink_factory, cfg, fg, *, print_stats, on_stats, stop_requested, resources):
     import cv2
 
-    pipe = FaceSwapPipeline(cfg)
+    pipe = create_engine(cfg)
+    resources.callback(pipe.close)
     pipe.set_source(load_bgr(source_image))
+    from .outputs.sinks import PreviewSink
+
+    original_preview = PreviewSink(filename="original.png", publish_stats=False) if cfg.preview_original else None
     cap = open_capture(input_video)
+    resources.callback(cap.release)
     src_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or cfg.preset.width
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or cfg.preset.height
     out_fps = fg.resolve_output_fps(src_fps) if fg and fg.enabled else src_fps
     sink = sink_factory(w, h, out_fps)
+    resources.callback(sink.close)
     counts = {"source_frames": 0, "keyframes": 0, "generated_frames": 0}
     swap_ms: list[float] = []
     gen_ms: list[float] = []
@@ -490,6 +538,7 @@ def run_offline(
     timeline = OutputTimeline(out_fps) if fg and fg.enabled else None
     if timeline is not None:
         backend = create_backend(fg.backend, variant=fg.variant, precision=fg.precision, flow_scale=fg.flow_scale)
+        resources.callback(backend.shutdown)
         backend.initialize(w, h)
 
     def emit(frame: np.ndarray) -> None:
@@ -500,9 +549,13 @@ def run_offline(
     k = 0
     try:
         while True:
+            if stop_requested is not None and stop_requested():
+                raise InterruptedError("Video processing cancelled")
             ok, frame = cap.read()
             if not ok:
                 break
+            if original_preview is not None:
+                original_preview.write(frame)
             t0 = time.perf_counter()
             out, _ = pipe.swap_frame(frame)
             swap_ms.append((time.perf_counter() - t0) * 1000)
@@ -535,6 +588,13 @@ def run_offline(
                         emit(next(gi))
                         counts["generated_frames"] += 1
             prev_t = t
+            if on_stats is not None:
+                elapsed_now = time.perf_counter() - t_start
+                on_stats({"input_fps": None, "swap_fps": counts["source_frames"] / max(elapsed_now, 1e-9),
+                          "output_fps": None, "source_frames": counts["source_frames"],
+                          "frames": counts["source_frames"], "generated_frames": counts["generated_frames"],
+                          "swap_latency_ms": swap_ms[-1], "width": w, "height": h,
+                          "latency_p95_ms": float(np.percentile(swap_ms[-240:], 95))})
             if cfg.max_frames is not None and counts["source_frames"] >= cfg.max_frames:
                 break
             if print_stats and counts["source_frames"] % 30 == 0:
@@ -543,10 +603,7 @@ def run_offline(
                     flush=True,
                 )
     finally:
-        cap.release()
-        sink.close()
-        if backend is not None:
-            backend.shutdown()
+        pass  # ExitStack owns every resource, including failures during startup.
     elapsed = time.perf_counter() - t_start
     med = lambda xs: None if not xs else round(sorted(xs)[len(xs) // 2], 2)  # noqa: E731
     return {

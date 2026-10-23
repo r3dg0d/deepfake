@@ -4,6 +4,35 @@ Linux **real-time face-swap CLI** wrapping [AlphaFace](https://github.com/andrew
 
 Upstream AlphaFace is a **still/batch** research demo. This project adds a real application shell: webcam/video capture, face detect → swap → composite, presets, metrics, and OBS-friendly outputs (preview, file, FFmpeg pipe, optional GStreamer, v4l2loopback virtual cam).
 
+## v0.4 development snapshot
+
+AlphaFace remains the default. The experimental engine adds **genuine LivePortrait
+neural head animation**, reusing capture, RIFE, recording, virtual-camera sinks,
+consent and disclosure. A full **Quickshell control center** provides previews,
+engine/reference selection, private character storage, model operations, recording,
+offline rendering, performance history and persistent themes/preferences.
+
+```bash
+deepfake app
+deepfake models list --experimental
+deepfake models install liveportrait --yes
+# Configure the pinned source and host optional dependencies first; see the guide.
+deepfake webcam --engine experimental --mode head --reference avatar.png --frame-gen off
+deepfake video -i input.mp4 -o head.mp4 --engine experimental --mode head --reference avatar.png
+```
+
+This is **0.4.0.dev0**, not a completed release. EditaLive has an isolated offline
+adapter; its genuine full-body validation and remaining release gaps are tracked
+in [STATUS.md](STATUS.md). PersonaLive installation is blocked by a missing
+required official base checkpoint. Hybrid, DirectSwap and PixReenact are not
+advertised as working engines.
+
+- [Experimental setup and exact examples](docs/experimental-mode.md)
+- [Desktop controls and launcher](docs/quickshell-app.md)
+- [Model manifests, licenses and environments](docs/experimental-models.md)
+- [Research audit through October 20, 2026](docs/research/experimental-engine-2026.md)
+- [Measured RTX 4090 results and limitations](docs/benchmarks/experimental-rtx4090.md)
+
 ## Research & consent framing
 
 This tool is for **research, VFX, avatars, filmmaking, consenting demos, and disclosed synthetic media**.
@@ -100,7 +129,8 @@ deepfake video -i in.mp4 -f person.png -o out60.mp4
 If FrameGen fails to initialize, Deepfake **falls back** to native AlphaFace
 output, warns in the CLI and widget, and keeps running.
 
-Measured on an RTX 4090 (30 fps camera, 2026-09-22):
+Historical project measurements on an RTX 4090 (30 fps camera, 2026-09-22;
+not revalidated as these exact configurations in the development snapshot):
 
 | Res | Mode | Output fps (new frames) | Capture→sink latency |
 |---|---|---|---|

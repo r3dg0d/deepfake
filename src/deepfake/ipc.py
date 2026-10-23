@@ -7,13 +7,16 @@ the widget land in ``control.json`` and are drained by the session.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
 STATE_DIR_NAME = "deepfake"
+PROTOCOL_VERSION = 1
 
 
 def state_dir() -> Path:
@@ -21,6 +24,7 @@ def state_dir() -> Path:
     root = Path(base) if base else Path.home() / ".local" / "state"
     d = root / STATE_DIR_NAME
     d.mkdir(parents=True, exist_ok=True)
+    d.chmod(0o700)
     return d
 
 
@@ -41,10 +45,15 @@ def pid_path() -> Path:
 
 
 def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    text = json.dumps(data, indent=2, sort_keys=False) + "\n"
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        os.replace(name, path)
+    finally:
+        Path(name).unlink(missing_ok=True)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -58,9 +67,16 @@ class SessionBus:
     """Publishes live session state and drains widget control commands."""
 
     def __init__(self, session_id: str) -> None:
+        self._lock = (state_dir() / "session.lock").open("a")
+        try:
+            fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as e:
+            self._lock.close()
+            raise RuntimeError("Another Deepfake session is active. Stop it before starting or switching engines.") from e
         self.session_id = session_id
         self._state: dict[str, Any] = {
             "session_id": session_id,
+            "protocol_version": PROTOCOL_VERSION,
             "active": False,
             "mode": None,
             "state": "init",
@@ -98,6 +114,23 @@ class SessionBus:
         return dict(self._state)
 
     def drain_controls(self) -> list[dict[str, Any]]:
+        commands = []
+        inbox = state_dir() / "controls"
+        if inbox.is_dir():
+            for p in sorted(inbox.glob("*.json"))[:100]:
+                data = read_json(p)
+                p.unlink(missing_ok=True)
+                if self._valid_control(data):
+                    commands.append(data)
+        commands.extend(c for c in self._drain_legacy() if self._valid_control(c))
+        return commands
+
+    def _valid_control(self, data) -> bool:
+        return (isinstance(data, dict) and data.get("session_id", self.session_id) == self.session_id
+                and data.get("protocol_version", PROTOCOL_VERSION) == PROTOCOL_VERSION
+                and data.get("cmd") in {"stop", "quit", "exit", "set_face", "set_frame_gen"})
+
+    def _drain_legacy(self) -> list[dict[str, Any]]:
         path = control_path()
         if not path.is_file():
             return []
@@ -117,9 +150,25 @@ class SessionBus:
         return []
 
     def close(self, *, state: str = "stopped") -> None:
+        if self._lock.closed:
+            return
         self.update(state=state, active=False)
         try:
             if pid_path().is_file():
                 pid_path().unlink()
         except OSError:
             pass
+        fcntl.flock(self._lock, fcntl.LOCK_UN)
+        self._lock.close()
+
+
+def send_control(session_id: str, cmd: str) -> None:
+    import uuid
+
+    if cmd != "stop":
+        raise ValueError("Only stop is supported by the desktop session controller")
+    inbox = state_dir() / "controls"
+    inbox.mkdir(mode=0o700, exist_ok=True)
+    write_json_atomic(inbox / f"{time.time_ns()}-{uuid.uuid4().hex}.json", {
+        "protocol_version": PROTOCOL_VERSION, "session_id": session_id, "cmd": cmd,
+    })
