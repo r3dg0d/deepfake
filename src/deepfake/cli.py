@@ -944,7 +944,7 @@ def desktop_install(executable):
 
 
 @desktop_group.command("model-job", hidden=True)
-@click.argument("action", type=click.Choice(["install_model", "verify_model", "remove_model"]))
+@click.argument("action", type=click.Choice(["install_model", "verify_model", "remove_model", "reinstall_model"]))
 @click.argument("model")
 def desktop_model_job(action, model):
     from .experimental_models import install, manifests
@@ -962,10 +962,15 @@ def desktop_model_job(action, model):
     try:
         if action == "install_model":
             result = install(model, yes=True, progress=progress) if model in manifests() else install_model(model, yes=True, progress=progress)
+        elif action == "reinstall_model":
+            result = install_model(model, yes=True, force=True, progress=progress)
         elif action == "verify_model":
-            result = verify_model(model)
+            status.update(file="re-hashing and loading on the GPU")
+            write_json_atomic(path, status)
+            result = verify_model(model, load=model in CATALOG)
             if not result["ok"]:
-                raise RuntimeError(str(result))
+                bad = [f["path"] + ": " + str(f.get("reason")) for f in result.get("files", []) if not f.get("ok")]
+                raise RuntimeError("; ".join(bad) or (result.get("load_check") or {}).get("error") or "verification failed")
         else:
             result = remove_model(model, yes=True)
         status.update(state="complete", result=result)

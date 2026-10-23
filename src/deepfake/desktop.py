@@ -34,8 +34,11 @@ def install_desktop(executable: Path):
     if target.exists():
         shutil.copytree(target, backup / "quickshell")
     target.mkdir(parents=True, exist_ok=True)
-    for filename in ("shell.qml", "ControlCenter.qml"):
-        shutil.copyfile(source / filename, target / filename)
+    # The Galaxy components (Galaxy.qml singleton, GalaxyButton, GalaxyPanel, ...) live next to the shell.
+    for f in sorted(source.glob("*.qml")) + [source / n for n in ("run.sh", "control.py", "noqs.sh") if (source / n).is_file()]:
+        shutil.copyfile(f, target / f.name)
+        if f.suffix in (".sh", ".py"):
+            os.chmod(target / f.name, 0o755)
     # Preserve the existing app-launcher identity and icon name.
     from .paths import data_home
 
@@ -67,7 +70,7 @@ def preferences_path():
     return config_home() / "desktop.json"
 
 
-DEFAULT_PREFERENCES = {"theme": "dark", "mirror": False, "comparison": "processed", "camera": "0",
+DEFAULT_PREFERENCES = {"theme": "galaxy", "mirror": False, "comparison": "processed", "camera": "0",
                        "preset": "balanced", "engine": "alphaface", "mode": "head", "backend": "liveportrait",
                        "reference": "", "recording_path": "", "encoder": "auto", "frame_gen": "auto",
                        "width": 640, "height": 480, "fps": 30, "output_device": ""}
@@ -81,7 +84,8 @@ def preferences():
 def validate_preferences(data):
     if not isinstance(data, dict) or set(data) - set(DEFAULT_PREFERENCES):
         raise ValueError("Unknown desktop preference")
-    enums = {"theme": {"dark", "light", "matrix"}, "comparison": {"original", "processed", "side-by-side", "slider"},
+    enums = {"theme": {"galaxy", "dark", "light", "matrix"},  # only galaxy is drawn; others kept for old files
+              "comparison": {"original", "processed", "side-by-side", "slider"},
              "engine": {"alphaface", "experimental"}, "mode": {"head", "fullbody"},
              "backend": {"personalive", "editalive", "liveportrait"}, "preset": {"latency", "balanced", "quality"},
              "frame_gen": {"auto", "off", "2x", "3x", "4x"}, "encoder": {"auto", "libx264", "h264_nvenc"}}
@@ -95,6 +99,24 @@ def validate_preferences(data):
         if key not in enums and key not in {"width", "height", "fps", "mirror"} and (not isinstance(value, str) or len(value) > 4096):
             raise ValueError(f"Invalid {key}")
     return data
+
+
+def gpu_info():
+    """Device name / memory / utilisation from NVML (cheap, no subprocess). Empty when unavailable."""
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        h = pynvml.nvmlDeviceGetHandleByIndex(0)
+        mem = pynvml.nvmlDeviceGetMemoryInfo(h)
+        name = pynvml.nvmlDeviceGetName(h)
+        return {"name": name.decode() if isinstance(name, bytes) else name,
+                "util_pct": pynvml.nvmlDeviceGetUtilizationRates(h).gpu,
+                "mem_used_mib": round(mem.used / 2**20), "mem_total_mib": round(mem.total / 2**20),
+                "temp_c": pynvml.nvmlDeviceGetTemperature(h, pynvml.NVML_TEMPERATURE_GPU),
+                "power_w": round(pynvml.nvmlDeviceGetPowerUsage(h) / 1000)}
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def snapshot():
@@ -111,7 +133,7 @@ def snapshot():
             "engines": engine_status(), "models": [{"name": m.name, "installed": m.installed, **m.meta} for m in list_models()],
             "characters": list_characters(), "devices": [vars(d) for d in list_v4l2_devices()],
             "consent": is_acknowledged(), "consent_text": CONSENT_TEXT, "model_job": job,
-            "state_dir": str(state_dir())}
+            "state_dir": str(state_dir()), "gpu": gpu_info()}
 
 
 def build_session_command(prefs, *, virtual=False, recording=False):
@@ -190,12 +212,17 @@ def request(message):
 
         remove_character(message["id"])
         return {"message": "Character removed"}
-    if action in {"install_model", "verify_model", "remove_model"}:
+    if action in {"install_model", "verify_model", "remove_model", "reinstall_model"}:
         from .models import list_models
 
         name = message.get("model")
         if name not in {m.name for m in list_models()}:
             raise ValueError("Unknown model")
+        if action == "reinstall_model":
+            from .model_store import CORE
+
+            if name not in CORE:
+                raise ValueError("Repair (staged redownload) is available for the core models")
         if action != "verify_model" and message.get("confirmed") is not True:
             raise ValueError("Review the model license, download size, or removal and confirm")
         job = read_json(state_dir() / "model-job.json")
