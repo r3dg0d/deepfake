@@ -102,7 +102,9 @@ def _resolve_auto(
 ) -> FrameGenSettings:
     cache = load_framegen_cache()
     age = time.time() - float(cache.get("ts") or 0)
-    if not force_bench and cache.get("mode") and age < 7 * 86400:
+    # the cached choice only holds for the source rate it was made for (a 24 fps decision is wrong at 30 fps)
+    same_rate = abs(float(cache.get("source_fps") or -1) - float(source_fps)) < 0.5
+    if not force_bench and cache.get("mode") and age < 7 * 86400 and same_rate:
         mode = str(cache["mode"])
         if progress:
             progress(f"frame-gen auto → {mode} (cached)")

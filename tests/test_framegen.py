@@ -191,3 +191,16 @@ def test_shed_controller_degrades_and_recovers():
     assert ShedController.select(pts, 2) == []
     assert c.update(3.0, 60, 180) == 2  # calm starts
     assert c.update(5.1, 60, 300) == 1  # calm for >= cooldown → step down
+
+
+def test_auto_cache_is_keyed_on_source_rate(tmp_path, monkeypatch):
+    from deepfake import session as sess
+    from deepfake.framegen.settings import FrameGenSettings
+
+    store = {}
+    monkeypatch.setattr(sess, "load_framegen_cache", lambda: dict(store))
+    monkeypatch.setattr(sess, "save_framegen_cache", lambda d: store.update(d))
+    base = FrameGenSettings(enabled=True, factor=None, backend="rife", variant="4.25")
+    assert sess._resolve_auto(base, source_fps=24.0, force_bench=False, progress=None).factor == 3
+    # a 30 fps source must not reuse the 24 fps decision (3x would overshoot to 90 fps)
+    assert sess._resolve_auto(base, source_fps=30.0, force_bench=False, progress=None).factor == 2

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import sys
@@ -311,6 +312,9 @@ def _run_live_started(kwargs, source, cfg, *, mode, session):
 
     session.bus.update(engine=cfg.engine, backend=cfg.model_backend or cfg.backend or "alphaface",
                        transformation_mode=cfg.mode, output_video=str(kwargs.get("output_video") or ""))
+    file_fps = _probe_file_fps(kwargs.get("input_device"))
+    if file_fps:  # a video file as the camera: its real rate, not the preset's request, drives FrameGen
+        cfg.preset = dataclasses.replace(cfg.preset, fps=int(round(file_fps)))
     fg = _fg_from_kwargs(kwargs, float(cfg.preset.fps))
     # Probe FrameGen early so we can fall back without aborting the session.
     if fg.enabled:
@@ -354,6 +358,19 @@ def _run_live_started(kwargs, source, cfg, *, mode, session):
     except KeyboardInterrupt:
         return
     click.echo("final: " + json.dumps(final), err=True)
+
+
+def _probe_file_fps(raw: str | None) -> float | None:
+    if not raw or raw.isdigit() or raw.startswith("/dev/") or not Path(raw).is_file():
+        return None
+    import cv2
+
+    probe = cv2.VideoCapture(str(raw))
+    try:
+        fps = probe.get(cv2.CAP_PROP_FPS) or 0.0
+    finally:
+        probe.release()
+    return float(fps) if 1.0 <= fps <= 240.0 else None
 
 
 def _parse_input_device(raw: str | None, default: int = 0):

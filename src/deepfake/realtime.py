@@ -195,12 +195,29 @@ class GpuPoller(threading.Thread):
         self._halt.set()
 
 
+def _file_fps(source, cap) -> float | None:
+    """Frame rate to pace a *file* source at; None for cameras (they pace themselves)."""
+    import cv2
+
+    if source is None or isinstance(source, int) or (isinstance(source, str) and (source.isdigit() or source.startswith("/dev/"))):
+        return None
+    from pathlib import Path
+
+    if not Path(str(source)).is_file():
+        return None
+    fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+    return float(fps) if 1.0 <= fps <= 240.0 else 30.0
+
+
 class CaptureThread(threading.Thread):
     """Reads the camera continuously; keeps only the newest frame."""
 
-    def __init__(self, cap, size: tuple[int, int], stats: LiveStats) -> None:
+    def __init__(self, cap, size: tuple[int, int], stats: LiveStats, *, pace_fps: float | None = None) -> None:
         super().__init__(name="deepfake-capture", daemon=True)
         self.cap, self.size, self.stats = cap, size, stats
+        # A video file used as the "camera" is read as fast as the decoder allows (measured: 3600 fps, every
+        # frame dropped); pace it at its own frame rate so it behaves like a live source.
+        self.pace = 1.0 / pace_fps if pace_fps else None
         self._cv = threading.Condition()
         self._latest: tuple[float, np.ndarray] | None = None
         self._seq = 0
@@ -211,7 +228,13 @@ class CaptureThread(threading.Thread):
     def run(self) -> None:
         import cv2
 
+        next_t = time.monotonic()
         while not self._halt.is_set():
+            if self.pace:
+                next_t += self.pace
+                delay = next_t - time.monotonic()
+                if delay > 0:
+                    self._halt.wait(delay)
             try:
                 ok, frame = self.cap.read()
             except Exception:
@@ -418,7 +441,7 @@ def _run_realtime(
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
     cap.set(cv2.CAP_PROP_FPS, source_fps)
-    capture = CaptureThread(cap, size, stats)
+    capture = CaptureThread(cap, size, stats, pace_fps=_file_fps(capture_source, cap))
     gpu = GpuPoller(stats)
     for th in (capture, worker, gpu):
         if th is not None:

@@ -93,42 +93,77 @@ class OpenCVHaarDetector(FaceDetector):
         return boxes
 
 
-class OpenCVYuNetDetector(FaceDetector):
-    """Optional YuNet if opencv face module + model file available; else raises."""
+class YuNetDetector(FaceDetector):
+    """OpenCV's YuNet (cv2.FaceDetectorYN): boxes plus 5 landmarks, robust to pose and lighting where Haar is not.
 
-    def __init__(self, model_path: str | None = None) -> None:
+    Default detector. Runs at <= DETECT_WIDTH like the Haar path and maps boxes back. Weights are the pinned
+    OpenCV Zoo model installed by ``deepfake models install yunet --yes``.
+    """
+
+    DETECT_WIDTH = 640
+
+    def __init__(self, model_path: str | None = None, *, score_threshold: float = 0.7, detect_width: int | None = None) -> None:
         import cv2
 
         if not hasattr(cv2, "FaceDetectorYN"):
             raise RuntimeError("OpenCV FaceDetectorYN not available in this build")
-        # Without a model file, fall back is caller's job.
-        if not model_path:
-            raise RuntimeError("YuNet requires a model path")
-        self._det = cv2.FaceDetectorYN.create(model_path, "", (320, 320))
+        if model_path is None:
+            from .paths import models_dir
+
+            p = models_dir() / "yunet" / "face_detection_yunet_2023mar.onnx"
+            if not p.is_file():
+                raise RuntimeError("YuNet model not installed: deepfake models install yunet --yes")
+            model_path = str(p)
+        self._det = cv2.FaceDetectorYN.create(model_path, "", (320, 320), score_threshold, 0.3, 5000)
+        self.detect_width = detect_width or self.DETECT_WIDTH
+        self._size = (0, 0)
 
     def detect(self, frame_bgr: np.ndarray) -> list[FaceBox]:
+        import cv2
+
         h, w = frame_bgr.shape[:2]
-        self._det.setInputSize((w, h))
-        _, faces = self._det.detect(frame_bgr)
+        scale = min(1.0, self.detect_width / float(w))
+        small = frame_bgr if scale >= 1.0 else cv2.resize(frame_bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        sh, sw = small.shape[:2]
+        if (sw, sh) != self._size:
+            self._det.setInputSize((sw, sh))
+            self._size = (sw, sh)
+        _, faces = self._det.detect(small)
         out: list[FaceBox] = []
         if faces is None:
             return out
+        inv = 1.0 / scale
         for f in faces:
-            x, y, bw, bh, score = f[:5]
-            out.append(FaceBox(int(x), int(y), int(bw), int(bh), float(score)))
+            x, y, bw, bh = (float(v) * inv for v in f[:4])
+            lm = np.asarray(f[4:14], dtype=np.float32).reshape(5, 2) * inv
+            out.append(FaceBox(int(x), int(y), int(bw), int(bh), float(f[14]), landmarks=lm))
+        out.sort(key=lambda b: b.w * b.h, reverse=True)
         return out
 
 
+OpenCVYuNetDetector = YuNetDetector  # previous name
+
+
 def create_detector(prefer: str = "auto") -> FaceDetector:
+    errors = []
+    if prefer in ("yunet", "auto"):
+        try:
+            return YuNetDetector()
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"YuNet: {e}")
+            if prefer != "auto":
+                raise
     if prefer in ("opencv", "haar", "auto"):
         try:
             return OpenCVHaarDetector()
-        except Exception:
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"Haar: {e}")
             if prefer != "auto":
                 raise
     raise RuntimeError(
-        "No face detector available. Install opencv-python-headless "
-        "(Haar cascade is built-in)."
+        "No face detector available (" + "; ".join(errors) + "). "
+        "Install the default detector: deepfake models install yunet --yes "
+        "(OpenCV 5 removed the Haar cascades)."
     )
 
 
@@ -199,6 +234,7 @@ class AsyncDetector:
         import threading
 
         self._det = detector
+        self._lock = threading.Lock()  # detectors are not thread-safe (YuNet's DNN graph asserts under concurrent use)
         self._cv = threading.Condition()
         self._pending: np.ndarray | None = None
         self._boxes: list[FaceBox] | None = None
@@ -211,6 +247,11 @@ class AsyncDetector:
             self._pending = frame_bgr
             self._cv.notify()
 
+    def detect_now(self, frame_bgr: np.ndarray) -> list[FaceBox]:
+        """Synchronous detection on the caller's thread, serialized with the worker (first frame)."""
+        with self._lock:
+            return self._det.detect(frame_bgr)
+
     def latest(self) -> list[FaceBox] | None:
         with self._cv:
             return self._boxes
@@ -222,7 +263,8 @@ class AsyncDetector:
                 if self._closed:
                     return
                 frame, self._pending = self._pending, None
-            boxes = self._det.detect(frame)
+            with self._lock:
+                boxes = self._det.detect(frame)
             with self._cv:
                 self._boxes = boxes
 

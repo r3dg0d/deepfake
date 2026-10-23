@@ -97,8 +97,8 @@ class FaceSwapPipeline:
         if self._async is not None:
             self._async.submit(frame_bgr)
             boxes = self._async.latest()
-            if boxes is None:  # first frame: nothing detected yet
-                boxes = self.detector.detect(frame_bgr)
+            if boxes is None:  # first frame: nothing detected yet (serialized with the detector thread)
+                boxes = self._async.detect_now(frame_bgr)
             self._last_boxes = boxes
         else:
             run_detect = (self._frame_i % max(1, preset.detect_interval)) == 0

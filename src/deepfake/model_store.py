@@ -67,6 +67,15 @@ CORE: dict[str, dict[str, Any]] = {
              "format": "zip", "extract_to": "models/buffalo_l", "keep": False},
         ],
     },
+    "yunet": {
+        "files": [
+            {"path": "face_detection_yunet_2023mar.onnx",
+             "url": "https://huggingface.co/opencv/face_detection_yunet/resolve/3cc26e7f1014a5ee5d74a42acee58bafc9d0a310/"
+                    "face_detection_yunet_2023mar.onnx",
+             "size": 232589, "sha256": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+             "trust": "upstream", "format": "onnx"},
+        ],
+    },
     "alphaface": {
         "files": [
             {"path": "alphaface_demo.pt", "url": DRIVE.format("18ZOQB3WmIFnMwi1GqBroFFEOuSNKWpZQ"),

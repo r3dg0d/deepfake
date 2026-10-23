@@ -27,6 +27,19 @@ RIFE_WEIGHTS: dict[str, str] = {
 }
 
 CATALOG: dict[str, dict[str, Any]] = {
+    "yunet": {
+        "name": "yunet",
+        "backend": "detector",
+        "source": "opencv/face_detection_yunet @ 3cc26e7 (OpenCV Zoo, official Hugging Face repo)",
+        "paper": "YuNet (Wu et al., Machine Intelligence Research 2023)",
+        "code_license": "MIT (OpenCV Zoo YuNet)",
+        "weights_license": "MIT",
+        "size_hint": "227 KB",
+        "checksum": "Hugging Face LFS SHA-256 (pinned)",
+        "install": "staged https + sha256",
+        "notes": "Default face detector (cv2.FaceDetectorYN): boxes + 5 landmarks, works on OpenCV 4.x and 5.x. "
+                 "OpenCV 5 removed the Haar cascades the old detector used.",
+    },
     "alphaface": {
         "name": "alphaface",
         "backend": "alphaface",

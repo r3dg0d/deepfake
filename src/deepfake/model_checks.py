@@ -187,7 +187,21 @@ def _faces_for_check(img):
     return sorted(create_detector("auto").detect(img), key=lambda b: b.x)
 
 
-CHECKS = {"rife": check_rife, "inswapper": check_inswapper, "alphaface": check_alphaface}
+def check_yunet() -> dict[str, Any]:
+    from .detect import YuNetDetector
+
+    det = YuNetDetector()
+    img = sample_photo()
+    det.detect(img)  # warm-up
+    t0 = time.perf_counter()
+    boxes = det.detect(img)
+    ms = (time.perf_counter() - t0) * 1000
+    with_lm = sum(1 for b in boxes if b.landmarks is not None)
+    return {"ok": len(boxes) >= 5 and with_lm == len(boxes), "faces": len(boxes), "with_landmarks": with_lm,
+            "detect_ms": round(ms, 2), "input": f"{img.shape[1]}x{img.shape[0]}"}
+
+
+CHECKS = {"rife": check_rife, "inswapper": check_inswapper, "alphaface": check_alphaface, "yunet": check_yunet}
 
 
 def run_check(name: str) -> dict[str, Any]:
