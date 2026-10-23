@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import click
@@ -18,7 +19,7 @@ from .framegen.registry import BACKENDS as FRAMEGEN_BACKENDS
 from .framegen.settings import FrameGenSettings
 from .framegen.variants import VARIANTS as RIFE_VARIANTS
 from .identity import list_fakeperson_identities, resolve_source_image
-from .models import install_model, list_models
+from .models import CATALOG, install_model, list_models
 from .outputs.sinks import create_sink
 from .paths import ensure_dirs
 from .pipeline import build_config
@@ -700,18 +701,95 @@ def models_info(model):
     click.echo(json.dumps({"name": row.name, "installed": row.installed, **row.meta}, indent=2))
 
 
+def _core_and_installed(all_models: bool, model: str | None) -> list[str]:
+    from .model_store import CORE
+
+    if all_models and model:
+        raise click.UsageError("give a model name or --all, not both")
+    if all_models:
+        return list(CORE)
+    if not model:
+        raise click.UsageError("give a model name or --all")
+    return [model]
+
+
+def _cli_progress():
+    state = {"file": None, "last": 0.0}
+
+    def progress(filename, done, total):
+        now = time.monotonic()
+        if filename != state["file"] or now - state["last"] > 1.0 or (total and done >= total):
+            state.update(file=filename, last=now)
+            pct = f"{100 * done / total:5.1f}%" if total else ""
+            click.echo(f"  {filename}: {done / 2**20:8.1f} MiB {pct}", err=True)
+
+    return progress
+
+
 @models_group.command("verify")
-@click.argument("model")
-def models_verify(model):
+@click.argument("model", required=False)
+@click.option("--all", "all_models", is_flag=True, help="Verify every core model (alphaface, inswapper, rife)")
+@click.option("--load", is_flag=True, help="Also load each model on the GPU and run a sample inference")
+@click.option("--json", "as_json", is_flag=True)
+def models_verify(model, all_models, load, as_json):
+    """Re-hash installed files against pinned / recorded SHA-256 (existence is not proof)."""
     from .models import verify_model
 
-    try:
-        result = verify_model(model)
-    except (KeyError, ValueError) as e:
-        raise click.ClickException(str(e)) from e
-    click.echo(json.dumps(result, indent=2))
-    if not result["ok"]:
-        raise click.ClickException("Checkpoint integrity verification failed or unavailable")
+    results, failed = [], []
+    for name in _core_and_installed(all_models, model):
+        try:
+            r = verify_model(name, load=load)
+        except (KeyError, ValueError) as e:
+            raise click.ClickException(str(e)) from e
+        results.append(r)
+        if not r["ok"]:
+            failed.append(name)
+        if not as_json:
+            click.echo(f"{name}: {'OK' if r['ok'] else 'FAILED'}")
+            for f in r.get("files", []):
+                click.echo(f"  {'ok ' if f.get('ok') else 'BAD'} {f['path']}  [{f.get('trust')}]"
+                           + (f"  {f['reason']}" if f.get("reason") else ""))
+            for k in ("missing", "corrupt"):
+                for f in r.get(k) or []:
+                    click.echo(f"  BAD {f}  ({k})")
+            if r.get("load_check"):
+                click.echo("  load check: " + json.dumps(r["load_check"]))
+    if as_json:
+        click.echo(json.dumps(results if all_models else results[0], indent=2))
+    if failed:
+        raise click.ClickException(f"verification failed: {', '.join(failed)} "
+                                   "(repair with: deepfake models reinstall <name> --yes)")
+
+
+@models_group.command("reinstall")
+@click.argument("model", required=False)
+@click.option("--all", "all_models", is_flag=True, help="Redownload every core model")
+@click.option("--yes", is_flag=True, help="Acknowledge licenses/size and redownload")
+@click.option("--keep-rollback", is_flag=True, help="Keep the previous files under models/.rollback/")
+@click.option("--no-load-check", is_flag=True, help="Skip the GPU load + sample inference gate")
+def models_reinstall(model, all_models, yes, keep_rollback, no_load_check):
+    """Force a fresh, staged download; old files stay in place until the new ones pass."""
+    from .model_store import ModelStoreError, install
+
+    names = _core_and_installed(all_models, model)
+    if not yes:
+        for n in names:
+            m = CATALOG.get(n, {})
+            click.echo(f"{n}: {m.get('size_hint')}\n  weights: {m.get('weights_license')}\n  source: {m.get('source')}")
+        raise click.ClickException("re-run with --yes to redownload")
+    failed = []
+    for n in names:
+        click.echo(f"== {n}")
+        try:
+            rec = install(n, force=True, progress=_cli_progress(), load_check=not no_load_check,
+                          keep_rollback=keep_rollback, log=click.echo)
+            check = rec.get("load_check")
+            click.echo(f"{n}: OK, {len(rec['files'])} files" + (f"; load check: {json.dumps(check)}" if check else ""))
+        except (ModelStoreError, KeyError, OSError) as e:
+            failed.append(n)
+            click.echo(f"{n}: FAILED: {e}", err=True)
+    if failed:
+        raise click.ClickException(f"reinstall failed for: {', '.join(failed)}")
 
 
 @models_group.command("remove")
@@ -883,7 +961,7 @@ def desktop_model_job(action, model):
 
     try:
         if action == "install_model":
-            result = install(model, yes=True, progress=progress) if model in manifests() else install_model(model, yes=True)
+            result = install(model, yes=True, progress=progress) if model in manifests() else install_model(model, yes=True, progress=progress)
         elif action == "verify_model":
             result = verify_model(model)
             if not result["ok"]:
