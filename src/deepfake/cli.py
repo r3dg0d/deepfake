@@ -62,6 +62,25 @@ def _common_io_options(fn):
         click.option("--blend-feather", type=int, default=None),
         click.option("--color-match/--no-color-match", default=None),
         click.option("--temporal-smooth", type=float, default=None),
+        click.option("--align", "alignment", type=click.Choice(["landmark", "bbox"]), default=None,
+                     help="Face crop: landmark = roll-corrected similarity transform (default); "
+                          "bbox = legacy padded detector box."),
+        click.option("--align-template", type=click.Choice(["ffhq", "arcface"]), default=None,
+                     help="Framing of the landmark crop the swap model sees (default ffhq)."),
+        click.option("--mask", "mask_mode", type=click.Choice(["landmark", "oval"]), default=None,
+                     help="Composite mask: landmark = fitted to the face (default); oval = legacy box oval."),
+        click.option("--landmark-smooth/--no-landmark-smooth", default=None,
+                     help="One Euro filter on the landmarks that place the crop (default on)."),
+        click.option("--identity-align", type=click.Choice(["arcface", "bbox"]), default=None,
+                     help="Crop of the identity image for the ArcFace encoder (default arcface)."),
+        click.option("--fit", type=click.Choice(["cover", "contain", "stretch"]), default=None,
+                     help="Capture frame to preset size: cover = crop (default), contain = pad, "
+                          "stretch = legacy (distorts)."),
+        click.option("--landmarker", type=click.Choice(["auto", "mediapipe", "yunet"]), default=None,
+                     help="Alignment points: auto = MediaPipe when installed, else refined YuNet."),
+        click.option("--legacy-geometry", is_flag=True,
+                     help="Shorthand for --align bbox --mask oval --identity-align bbox --fit stretch "
+                          "--no-landmark-smooth (pre-0.4.1 output, for comparison)."),
         click.option("--backend", type=click.Choice(["auto", "alphaface", "inswapper", "passthrough"]), default="auto"),
         click.option("--engine", type=click.Choice(["alphaface", "experimental"]), default="alphaface"),
         click.option("--mode", type=click.Choice(["face", "head", "fullbody"]), default=None),
@@ -189,6 +208,13 @@ def _apply_config_defaults(kwargs: dict) -> dict:
         kwargs["show_metrics"] = cfg.show_metrics
     if kwargs.get("frame_gen") is None and not kwargs.get("no_frame_gen"):
         kwargs["frame_gen"] = cfg.frame_generation or "auto"
+    legacy = {"alignment": "bbox", "align_template": "ffhq", "mask_mode": "oval", "landmark_smooth": False,
+              "identity_align": "bbox", "fit": "stretch", "landmarker": "yunet"}
+    for key in legacy:
+        if kwargs.get("legacy_geometry"):
+            kwargs[key] = legacy[key]
+        elif kwargs.get(key) is None:
+            kwargs[key] = getattr(cfg, key)
     return kwargs
 
 
@@ -244,6 +270,8 @@ def _cfg_from_kwargs(kwargs: dict):
         max_frames=kwargs.get("max_frames"),
         allow_passthrough=(backend == "passthrough"),
         swap_precision=_swap_precision(kwargs),
+        **{k: kwargs[k] for k in ("alignment", "align_template", "mask_mode", "landmark_smooth",
+                                  "identity_align", "fit", "landmarker") if kwargs.get(k) is not None},
     )
     w, h, fps = kwargs.get("width"), kwargs.get("height"), kwargs.get("fps")
     if w or h or fps:
@@ -295,6 +323,7 @@ def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
         resolution=(cfg.preset.width, cfg.preset.height),
         widget=_widget_flag(kwargs),
     )
+    session.bus.update(geometry=cfg.geometry_settings())
     session.start()
     try:
         return _run_live_started(kwargs, source, cfg, mode=mode, session=session)
@@ -479,7 +508,8 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
         resolution=(w, h),
         widget=_widget_flag(kwargs),
     )
-    session.bus.update(input_video=str(path), output_video=str(kwargs.get("output_video") or ""))
+    session.bus.update(input_video=str(path), output_video=str(kwargs.get("output_video") or ""),
+                       geometry=cfg.geometry_settings())
     session.start()
     fg = _fg_from_kwargs(kwargs, src_fps)
     if fg.enabled:
@@ -522,6 +552,12 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
                 framegen_multiplier=fg.factor,
                 generated_frames=summary.get("generated_frames"),
             )
+        out_path = kwargs.get("output_video")
+        if out_path is not None and Path(out_path).is_file():
+            from .provenance import write_sidecar
+
+            summary["provenance"] = str(write_sidecar(Path(out_path), cfg, input_video=path, source=source,
+                                                      frame_gen=fg, summary=summary))
         click.echo(json.dumps(summary, indent=2))
     except click.ClickException:
         raise
@@ -606,6 +642,45 @@ def doctor_cmd():
     critical = {"AlphaFace", "CUDA"}
     if any((not c.ok) and c.name in critical for c in checks):
         sys.exit(1)
+
+
+@main.command("compare")
+@click.option("-i", "--input", "input_path", type=click.Path(path_type=Path, exists=True), default=None,
+              help="Video or image you are authorized to process. Omit to use the bundled synthetic fixture.")
+@click.option("-f", "--source", "source_path", type=click.Path(path_type=Path, exists=True), default=None,
+              help="Identity image (needed for a real swap backend).")
+@click.option("-o", "--out", "out_dir", type=click.Path(path_type=Path), default=Path("geometry-compare"), show_default=True)
+@click.option("--backend", type=click.Choice(["auto", "alphaface", "inswapper", "passthrough", "stand-in"]),
+              default="auto", show_default=True,
+              help="stand-in = a labelled test double (tint + blur) that makes mask edges visible without weights.")
+@click.option("--frames", default=48, show_default=True, help="Frames to process (bounded).")
+@click.option("--variant", "variants", multiple=True,
+              help="Variants to run (default: legacy and current). name or name:key=value,key=value")
+@click.option("--preset", default="balanced", show_default=True)
+@click.option("--device", default="auto", show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+@click.option("--consent-ack", is_flag=True, hidden=True)
+def compare_cmd(input_path, source_path, out_dir, backend, frames, variants, preset, device, as_json, consent_ack):
+    """A/B the face geometry on the same frames: legacy box crop vs landmark alignment.
+
+    Writes per-variant previews, a side-by-side sheet and report.json (eye proportions,
+    crop-space landmark drift, mask-edge change, flicker, runtime, peak VRAM) to --out.
+    """
+    from .geometry_report import run_compare
+
+    if input_path is not None:
+        require_consent(ack=consent_ack, watermark=True)
+    try:
+        report = run_compare(input_path=input_path, source_path=source_path, out_dir=out_dir, backend=backend,
+                             frames=frames, variants=list(variants), preset=preset, device=resolve_cuda(device))
+    except (RuntimeError, ValueError, KeyError) as e:
+        raise click.ClickException(str(e)) from e
+    if as_json:
+        click.echo(json.dumps(report, indent=2))
+        return
+    from .geometry_report import format_report
+
+    click.echo(format_report(report))
 
 
 @main.group("config")

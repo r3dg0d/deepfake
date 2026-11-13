@@ -75,6 +75,15 @@ DEFAULT_PREFERENCES = {"theme": "galaxy", "mirror": False, "comparison": "proces
                        "reference": "", "recording_path": "", "encoder": "auto", "frame_gen": "auto",
                        "width": 640, "height": 480, "fps": 30, "output_device": ""}
 DEFAULT_PREFERENCES["input_video"] = ""
+# Face geometry (deepfake.geometry). The legacy values are bbox / oval / yunet / False / stretch.
+GEOMETRY_PREFERENCES = {"alignment": "landmark", "mask_mode": "landmark", "landmarker": "auto",
+                        "landmark_smooth": True, "fit": "cover"}
+DEFAULT_PREFERENCES.update(GEOMETRY_PREFERENCES)
+
+
+def geometry_args(prefs):
+    return ["--align", prefs["alignment"], "--mask", prefs["mask_mode"], "--landmarker", prefs["landmarker"],
+            "--landmark-smooth" if prefs["landmark_smooth"] else "--no-landmark-smooth", "--fit", prefs["fit"]]
 
 
 def preferences():
@@ -88,15 +97,17 @@ def validate_preferences(data):
               "comparison": {"original", "processed", "side-by-side", "slider"},
              "engine": {"alphaface", "experimental"}, "mode": {"head", "fullbody"},
              "backend": {"personalive", "editalive", "liveportrait"}, "preset": {"latency", "balanced", "quality"},
-             "frame_gen": {"auto", "off", "2x", "3x", "4x"}, "encoder": {"auto", "libx264", "h264_nvenc"}}
+             "frame_gen": {"auto", "off", "2x", "3x", "4x"}, "encoder": {"auto", "libx264", "h264_nvenc"},
+             "alignment": {"landmark", "bbox"}, "mask_mode": {"landmark", "oval"},
+             "landmarker": {"auto", "mediapipe", "yunet"}, "fit": {"cover", "contain", "stretch"}}
     for key, value in data.items():
         if key in enums and value not in enums[key]:
             raise ValueError(f"Invalid {key}")
         if key in {"width", "height", "fps"} and (type(value) is not int or not 1 <= value <= (240 if key == "fps" else 4096)):
             raise ValueError(f"Invalid {key}")
-        if key == "mirror" and not isinstance(value, bool):
-            raise ValueError("Invalid mirror preference")
-        if key not in enums and key not in {"width", "height", "fps", "mirror"} and (not isinstance(value, str) or len(value) > 4096):
+        if key in {"mirror", "landmark_smooth"} and not isinstance(value, bool):
+            raise ValueError(f"Invalid {key} preference")
+        if key not in enums and key not in {"width", "height", "fps", "mirror", "landmark_smooth"} and (not isinstance(value, str) or len(value) > 4096):
             raise ValueError(f"Invalid {key}")
     return data
 
@@ -141,7 +152,7 @@ def build_session_command(prefs, *, virtual=False, recording=False):
     args = [sys.executable, "-m", "deepfake", "virtualcam" if virtual else "webcam", "--no-widget", "--preview",
             "--engine", prefs["engine"], "--preset", prefs["preset"], "--input-device", prefs["camera"],
             "--width", str(prefs["width"]), "--height", str(prefs["height"]), "--fps", str(prefs["fps"]),
-            "--frame-gen", prefs["frame_gen"]]
+            "--frame-gen", prefs["frame_gen"]] + geometry_args(prefs)
     if prefs["reference"]:
         args += ["--reference", prefs["reference"]]
     if prefs["engine"] == "experimental":
@@ -195,7 +206,7 @@ def request(message):
                 raise ValueError("Choose an existing input video and a new output filename")
             args = [sys.executable, "-m", "deepfake", "video", "-i", str(source_video), "-o", str(output),
                     "--no-widget", "--preview", "--engine", prefs["engine"], "--reference", prefs["reference"],
-                    "--preset", prefs["preset"], "--frame-gen", "off", "--encoder", prefs["encoder"]]
+                    "--preset", prefs["preset"], "--frame-gen", "off", "--encoder", prefs["encoder"]] + geometry_args(prefs)
             if prefs["engine"] == "experimental":
                 args += ["--mode", prefs["mode"], "--model-backend", prefs["backend"]]
         log_path = state_dir() / "backend.log"

@@ -11,6 +11,7 @@ import numpy as np
 
 from .composite import paste_face
 from .detect import FaceBox, FaceDetector, align_crop, create_detector
+from .geometry import OneEuroFilter, align_face, fit_frame, landmark_mask, paste_aligned
 from .metrics import MetricsTracker, format_metrics
 from .presets import Preset, get_preset
 from .swap.base import Swapper
@@ -41,18 +42,32 @@ class PipelineConfig:
     allow_passthrough: bool = False
     swap_precision: str = "fp32"
     async_detect: bool = False  # live mode: detection on its own thread
+    # Geometry (see deepfake.geometry). "bbox"/"oval"/"stretch" reproduce the pre-0.4.1 behaviour.
+    alignment: str = "landmark"  # landmark | bbox
+    align_template: str = "ffhq"  # ffhq | arcface (crop framing the swap model sees)
+    mask_mode: str = "landmark"  # landmark | oval
+    landmark_smooth: bool = True  # One Euro filter on the landmarks that place the crop
+    identity_align: str = "arcface"  # arcface | bbox (crop of the identity image)
+    fit: str = "cover"  # cover | contain | stretch (capture frame -> preset size)
+    landmarker: str = "auto"  # auto | mediapipe | yunet (source of the alignment points)
+
+    def geometry_settings(self) -> dict[str, Any]:
+        return {"alignment": self.alignment, "align_template": self.align_template, "mask_mode": self.mask_mode,
+                "landmark_smooth": self.landmark_smooth, "identity_align": self.identity_align, "fit": self.fit,
+                "landmarker": self.landmarker}
     frame_gen: FrameGenSettings | None = None
 
 
 class FaceSwapPipeline:
     def __init__(self, cfg: PipelineConfig) -> None:
         self.cfg = cfg
-        self.detector: FaceDetector = create_detector("auto")
+        self.detector: FaceDetector = create_detector("auto", landmarker=cfg.landmarker)
         self.swapper: Swapper = create_swapper(
             cfg.backend,
             device=cfg.device,
             allow_passthrough=cfg.allow_passthrough,
             precision=cfg.swap_precision,
+            identity_align=cfg.identity_align,
         )
         self.metrics = MetricsTracker()
         self._async = None
@@ -63,6 +78,10 @@ class FaceSwapPipeline:
         self._prev_faces: dict[int, np.ndarray] = {}
         self._prev_boxes: dict[int, FaceBox] = {}
         self._alpha: dict[int, float] = {}
+        self._lm_filters: dict[int, Any] = {}
+        self._masks: dict[tuple[int, str, int], np.ndarray] = {}
+        self._last_t: float | None = None
+        self.frame_dt: float | None = None  # set by offline callers; live mode measures wall time
         self._frame_i = 0
 
     def set_source(self, source_bgr: np.ndarray) -> None:
@@ -110,9 +129,14 @@ class FaceSwapPipeline:
         fresh = self._async is not None or boxes is not getattr(self, "_boxes_prev_frame", None)
         self._boxes_prev_frame = boxes
 
+        now = time.perf_counter()
+        dt = self.frame_dt or ((now - self._last_t) if self._last_t is not None else 0.0)
+        self._last_t = now
+
         out = frame_bgr
         if not boxes:
             self.metrics.mark_drop(0)
+            self._lm_filters.clear()
         else:
             selected: list[FaceBox]
             if multi:
@@ -122,15 +146,36 @@ class FaceSwapPipeline:
                 selected = [boxes[idx]]
 
             for i, box in enumerate(selected):
-                crop, paste_box = align_crop(frame_bgr, box, size=256, pad=0.35)
-                result = self.swapper.swap(crop)
-                infer_ms += result.inference_ms
-                prev = self._prev_faces.get(i)
                 if fresh:
                     alpha = motion_scaled_smoothing(smooth, self._prev_boxes.get(i), box)
                     self._alpha[i] = alpha
                 else:  # reused box: it can't show motion, keep the last measured weight
                     alpha = self._alpha.get(i, 0.0)
+                prev = self._prev_faces.get(i)
+                if self.cfg.alignment == "landmark" and box.landmarks is not None:
+                    # Landmark path: one similarity transform places the crop and, inverted, the paste.
+                    moved = fresh
+                    if not fresh and self._async is None and hasattr(self.detector, "refresh_landmarks"):
+                        # The box is from an earlier frame (detect_interval > 1); the points must not be.
+                        self.detector.refresh_landmarks(frame_bgr, box)
+                        moved = True
+                    aligned = self._align(i, box, frame_bgr, dt if moved else 0.0)
+                    result = self.swapper.swap(aligned.crop)
+                    infer_ms += result.inference_ms
+                    face = result.face_bgr
+                    if prev is not None and alpha > 0 and prev.shape == face.shape:
+                        import cv2
+
+                        face = cv2.addWeighted(face, 1.0 - alpha, prev, alpha, 0)
+                    out = paste_aligned(out, face, aligned, mask=self._mask(aligned.size, feather),
+                                        feather=feather, color_match=color)
+                    self._prev_faces[i] = result.face_bgr
+                    self._prev_boxes[i] = box
+                    continue
+                # Legacy path (also used when the detector has no landmarks, e.g. Haar).
+                crop, paste_box = align_crop(frame_bgr, box, size=256, pad=0.35)
+                result = self.swapper.swap(crop)
+                infer_ms += result.inference_ms
                 out = paste_face(
                     out,
                     result.face_bgr,
@@ -147,6 +192,29 @@ class FaceSwapPipeline:
         m = self.metrics.record(inference_ms=infer_ms, total_ms=total_ms)
         self._frame_i += 1
         return out, m
+
+
+    def _align(self, i: int, box: FaceBox, frame_bgr: np.ndarray, dt: float):
+        lm = np.asarray(box.landmarks, dtype=np.float64)
+        if self.cfg.landmark_smooth:
+            flt = self._lm_filters.get(i)
+            if flt is None:
+                flt = self._lm_filters[i] = OneEuroFilter()
+            if dt > 0 or flt._x is None:
+                lm = flt(lm, dt, scale=float(np.linalg.norm(lm[1] - lm[0])))
+            else:  # reused detection: keep the filtered position
+                lm = flt._x.copy()
+        return align_face(frame_bgr, lm, size=256, template=self.cfg.align_template)
+
+    def _mask(self, size: int, feather: int) -> np.ndarray | None:
+        if self.cfg.mask_mode != "landmark":
+            from .composite import _oval_soft_mask
+
+            return _oval_soft_mask(size, size, feather)
+        key = (size, self.cfg.align_template, feather)
+        if key not in self._masks:
+            self._masks[key] = landmark_mask(size, self.cfg.align_template, feather=feather)
+        return self._masks[key]
 
 
 def motion_scaled_smoothing(smooth: float, prev: FaceBox | None, cur: FaceBox, full_at: float = 0.04) -> float:
@@ -210,7 +278,7 @@ def run_loop(
             if not ok:
                 break
             if frame.shape[1] != cfg.preset.width or frame.shape[0] != cfg.preset.height:
-                frame = cv2.resize(frame, (cfg.preset.width, cfg.preset.height))
+                frame = fit_frame(frame, (cfg.preset.width, cfg.preset.height), cfg.fit)
             out, m = pipe.process_frame(frame)
             sink.write(out)
             if cfg.show_metrics and m.frames % 15 == 0:

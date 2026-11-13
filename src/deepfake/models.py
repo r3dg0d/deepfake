@@ -40,6 +40,19 @@ CATALOG: dict[str, dict[str, Any]] = {
         "notes": "Default face detector (cv2.FaceDetectorYN): boxes + 5 landmarks, works on OpenCV 4.x and 5.x. "
                  "OpenCV 5 removed the Haar cascades the old detector used.",
     },
+    "face-landmarker": {
+        "name": "face-landmarker",
+        "backend": "landmarker",
+        "source": "MediaPipe Face Landmarker float16 v1 (Google, storage.googleapis.com/mediapipe-models)",
+        "paper": "MediaPipe Face Mesh / Attention Mesh (Kartynnik et al. 2019; Grishchenko et al. 2020)",
+        "code_license": "Apache-2.0 (mediapipe)",
+        "weights_license": "Apache-2.0",
+        "size_hint": "3.6 MB",
+        "checksum": "SHA-256 (pinned)",
+        "install": "staged https + sha256",
+        "notes": "Optional landmark source for face alignment (needs `pip install mediapipe`). Measured on the "
+                 "bundled fixture: roll error 0.26 deg mean / 0.8 max vs 1.7 / 7.8 for refined YuNet points.",
+    },
     "alphaface": {
         "name": "alphaface",
         "backend": "alphaface",

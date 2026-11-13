@@ -292,6 +292,7 @@ ShellRoot {
                                             KV { k: "frame gen"; v: root.active ? (root.session.framegen_enabled ? "RIFE " + (root.session.framegen_variant || "") + " · " + root.session.framegen_multiplier + "× · " + root.num(root.session.framegen_ms_per_frame) + " ms/frame" : "off" + (root.session.framegen_warning ? " · " + root.session.framegen_warning : "")) : String(root.form.frame_gen || "—") }
                                             KV { k: "source"; v: root.active ? String(root.session.input_device || "camera " + (root.form.camera || "0")) : "camera " + String(root.form.camera || "0") }
                                             KV { k: "preset"; v: String(root.form.preset || "—") }
+                                            KV { k: "geometry"; v: root.active && root.session.geometry ? String(root.session.geometry.alignment) + " · " + String(root.session.geometry.landmarker) + " · mask " + String(root.session.geometry.mask_mode) + " · " + String(root.session.geometry.fit) : String(root.form.alignment || "landmark") + " · " + String(root.form.landmarker || "auto") + " (next start)" }
                                         }
                                     }
                                     GalaxyPanel { Layout.fillWidth: true; implicitHeight: gpuCol.implicitHeight + 28
@@ -354,6 +355,16 @@ ShellRoot {
                                         GalaxyCombo { model: ["auto", "off", "2x", "3x", "4x"]; enabled: !root.active; currentIndex: Math.max(0, model.indexOf(root.form.frame_gen)); onActivated: root.edit("frame_gen", currentText) }
                                         GalaxyButton { text: "Save"; primary: true; enabled: !root.active; onClicked: root.save() }
                                     }
+                                    GalaxySection { title: "Face geometry" }
+                                    GridLayout { Layout.fillWidth: true; columns: root.narrow ? 1 : 4; columnSpacing: 10; rowSpacing: 6
+                                        Hint { text: "Alignment" } Hint { text: "Landmarks" } Hint { text: "Composite mask" } Hint { text: "Camera frame fit" }
+                                        GalaxyCombo { model: ["landmark", "bbox"]; enabled: !root.active; currentIndex: Math.max(0, model.indexOf(root.form.alignment || "landmark")); onActivated: root.edit("alignment", currentText) }
+                                        GalaxyCombo { model: ["auto", "mediapipe", "yunet"]; enabled: !root.active && (root.form.alignment || "landmark") === "landmark"; currentIndex: Math.max(0, model.indexOf(root.form.landmarker || "auto")); onActivated: root.edit("landmarker", currentText) }
+                                        GalaxyCombo { model: ["landmark", "oval"]; enabled: !root.active; currentIndex: Math.max(0, model.indexOf(root.form.mask_mode || "landmark")); onActivated: root.edit("mask_mode", currentText) }
+                                        GalaxyCombo { model: ["cover", "contain", "stretch"]; enabled: !root.active; currentIndex: Math.max(0, model.indexOf(root.form.fit || "cover")); onActivated: root.edit("fit", currentText) }
+                                    }
+                                    GalaxyToggle { text: "Smooth landmarks (One Euro filter)"; enabled: !root.active; checked: root.form.landmark_smooth !== false; onToggled: root.edit("landmark_smooth", checked) }
+                                    Hint { text: "landmark = roll-corrected crop and a mask fitted to the face. bbox + oval + stretch reproduce the old output for comparison. Compare on your own clip: deepfake compare -i clip.mp4 -f face.png" }
                                     Hint { text: root.active ? "Engine and quality changes apply on the next start (stop the session first)." : "auto enables interpolation only when the camera rate is below the target and the RIFE weights verified." }
                                     Repeater { model: root.data.engines || []
                                         KV { required property var modelData; k: modelData.name; v: (modelData.status || "available") + (modelData.validation ? " · " + modelData.validation : ""); tint: modelData.available ? Galaxy.ok : Galaxy.muted } }

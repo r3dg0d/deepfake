@@ -101,8 +101,11 @@ class YuNetDetector(FaceDetector):
     """
 
     DETECT_WIDTH = 640
+    REFINE_SIZE = 320  # side of the face region the landmark pass runs on
+    REFINE_MAX_FACES = 4
 
-    def __init__(self, model_path: str | None = None, *, score_threshold: float = 0.7, detect_width: int | None = None) -> None:
+    def __init__(self, model_path: str | None = None, *, score_threshold: float = 0.7, detect_width: int | None = None,
+                 refine: bool = True) -> None:
         import cv2
 
         if not hasattr(cv2, "FaceDetectorYN"):
@@ -117,6 +120,38 @@ class YuNetDetector(FaceDetector):
         self._det = cv2.FaceDetectorYN.create(model_path, "", (320, 320), score_threshold, 0.3, 5000)
         self.detect_width = detect_width or self.DETECT_WIDTH
         self._size = (0, 0)
+        # Landmarks from the downscaled full frame are too coarse to align with: on a face ~90 px wide
+        # rolled 16 degrees they report about 2 degrees. A second pass on the face region at a fixed
+        # size gives usable points; boxes are left exactly as the first pass found them.
+        self.refine = refine
+        self._refiner = (cv2.FaceDetectorYN.create(model_path, "", (self.REFINE_SIZE, self.REFINE_SIZE),
+                                                   min(score_threshold, 0.5), 0.3, 50) if refine else None)
+
+    def refresh_landmarks(self, frame_bgr: np.ndarray, box: FaceBox) -> None:
+        """Re-measure the landmarks of a box found on an earlier frame against the current frame."""
+        if self._refiner is not None:
+            self._refine_landmarks(frame_bgr, box)
+
+    def _refine_landmarks(self, frame_bgr: np.ndarray, box: FaceBox) -> None:
+        import cv2
+
+        side = max(box.w, box.h) * 1.5
+        if side < 8:
+            return
+        cx, cy = box.x + box.w / 2.0, box.y + box.h / 2.0
+        n = self.REFINE_SIZE
+        s = n / side
+        # frame -> region: uniform scale + translation (no clamping, so the mapping stays exact at frame edges)
+        m = np.array([[s, 0.0, n / 2.0 - s * cx], [0.0, s, n / 2.0 - s * cy]], dtype=np.float64)
+        region = cv2.warpAffine(frame_bgr, m, (n, n), flags=cv2.INTER_AREA if s < 1 else cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_REPLICATE)
+        _, faces = self._refiner.detect(region)
+        if faces is None or len(faces) == 0:
+            return
+        # the face this box belongs to is the one nearest the region centre
+        best = min(faces, key=lambda f: (f[0] + f[2] / 2.0 - n / 2.0) ** 2 + (f[1] + f[3] / 2.0 - n / 2.0) ** 2)
+        lm = np.asarray(best[4:14], dtype=np.float64).reshape(5, 2)
+        box.landmarks = ((lm - m[:, 2]) / s).astype(np.float32)
 
     def detect(self, frame_bgr: np.ndarray) -> list[FaceBox]:
         import cv2
@@ -138,13 +173,110 @@ class YuNetDetector(FaceDetector):
             lm = np.asarray(f[4:14], dtype=np.float32).reshape(5, 2) * inv
             out.append(FaceBox(int(x), int(y), int(bw), int(bh), float(f[14]), landmarks=lm))
         out.sort(key=lambda b: b.w * b.h, reverse=True)
+        if self._refiner is not None:
+            for box in out[: self.REFINE_MAX_FACES]:
+                self._refine_landmarks(frame_bgr, box)
         return out
 
 
 OpenCVYuNetDetector = YuNetDetector  # previous name
 
 
-def create_detector(prefer: str = "auto") -> FaceDetector:
+class MediaPipeLandmarker:
+    """Five alignment points from the MediaPipe Face Landmarker (478-point mesh), run on each face region.
+
+    Optional: needs the ``mediapipe`` package and ``deepfake models install face-landmarker --yes``.
+    Boxes still come from the detector; only ``FaceBox.landmarks`` is replaced.
+    """
+
+    REGION = 256
+    # mesh indices: outer/inner corners of each eye (averaged to an eye centre), nose tip, mouth corners
+    LEFT_EYE, RIGHT_EYE, NOSE, MOUTH_L, MOUTH_R = (33, 133), (362, 263), 1, 61, 291
+
+    def __init__(self, model_path: str | None = None) -> None:
+        try:
+            import mediapipe as mp
+            from mediapipe.tasks import python as mp_python
+            from mediapipe.tasks.python import vision
+        except Exception as e:  # noqa: BLE001 - import errors include missing system libraries
+            raise RuntimeError(f"mediapipe is not usable ({e}). Install: pip install 'deepfake[landmarks]'") from e
+        if model_path is None:
+            from .paths import models_dir
+
+            p = models_dir() / "face-landmarker" / "face_landmarker.task"
+            if not p.is_file():
+                raise RuntimeError("face landmarker not installed: deepfake models install face-landmarker --yes")
+            model_path = str(p)
+        self._mp = mp
+        self._lmk = vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(
+            base_options=mp_python.BaseOptions(model_asset_path=model_path), num_faces=1))
+
+    def landmarks(self, frame_bgr: np.ndarray, box: FaceBox) -> np.ndarray | None:
+        import cv2
+
+        side = max(box.w, box.h) * 1.6
+        if side < 8:
+            return None
+        n = self.REGION
+        s = n / side
+        cx, cy = box.x + box.w / 2.0, box.y + box.h / 2.0
+        m = np.array([[s, 0.0, n / 2.0 - s * cx], [0.0, s, n / 2.0 - s * cy]], dtype=np.float64)
+        region = cv2.warpAffine(frame_bgr, m, (n, n), flags=cv2.INTER_AREA if s < 1 else cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_REPLICATE)
+        rgb = np.ascontiguousarray(cv2.cvtColor(region, cv2.COLOR_BGR2RGB))
+        res = self._lmk.detect(self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb))
+        if not res.face_landmarks:
+            return None
+        pts = np.array([[p.x * n, p.y * n] for p in res.face_landmarks[0]], dtype=np.float64)
+        five = np.stack([pts[list(self.LEFT_EYE)].mean(axis=0), pts[list(self.RIGHT_EYE)].mean(axis=0),
+                         pts[self.NOSE], pts[self.MOUTH_L], pts[self.MOUTH_R]])
+        return ((five - m[:, 2]) / s).astype(np.float32)
+
+
+class LandmarkRefinedDetector(FaceDetector):
+    """A detector whose boxes get their landmarks from a dedicated landmarker."""
+
+    MAX_FACES = 4
+
+    def __init__(self, detector: FaceDetector, landmarker: MediaPipeLandmarker) -> None:
+        self.detector, self.landmarker = detector, landmarker
+        self.landmark_source = "mediapipe"
+
+    def refresh_landmarks(self, frame_bgr: np.ndarray, box: FaceBox) -> None:
+        lm = self.landmarker.landmarks(frame_bgr, box)
+        if lm is not None:
+            box.landmarks = lm
+
+    def detect(self, frame_bgr: np.ndarray) -> list[FaceBox]:
+        boxes = self.detector.detect(frame_bgr)
+        for box in boxes[: self.MAX_FACES]:
+            lm = self.landmarker.landmarks(frame_bgr, box)
+            if lm is not None:
+                box.landmarks = lm
+        return boxes
+
+
+def create_detector(prefer: str = "auto", landmarker: str = "auto") -> FaceDetector:
+    """``landmarker``: auto (MediaPipe when installed, else refined YuNet points) | mediapipe | yunet."""
+    det = _create_box_detector(prefer)
+    if landmarker in ("auto", "mediapipe"):
+        try:
+            return LandmarkRefinedDetector(det, MediaPipeLandmarker())
+        except RuntimeError:
+            if landmarker == "mediapipe":
+                raise
+    return det
+
+
+def landmark_source(detector: FaceDetector) -> str:
+    if isinstance(detector, LandmarkRefinedDetector):
+        return detector.landmark_source
+    if isinstance(detector, YuNetDetector):
+        return "yunet-refined" if detector.refine else "yunet"
+    return "none"
+
+
+def _create_box_detector(prefer: str = "auto") -> FaceDetector:
     errors = []
     if prefer in ("yunet", "auto"):
         try:

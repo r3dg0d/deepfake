@@ -1,0 +1,205 @@
+{
+  "tool": "deepfake compare",
+  "version": "0.4.0.dev0",
+  "created": "2026-11-13T06:01:24+0000",
+  "fixture": "synthetic (bundled bench_face.jpg, roll +-18 deg)",
+  "frames": 48,
+  "fps": 24.0,
+  "preset": "balanced",
+  "device": "cpu",
+  "backend": "stand-in",
+  "model": {
+    "name": null
+  },
+  "measured_with": "mediapipe landmarks (same instrument for every variant)",
+  "real_swap_model": false,
+  "aspect": {
+    "capture": [
+      640,
+      480
+    ],
+    "preset": [
+      960,
+      540
+    ],
+    "stretch": 1.339,
+    "cover": 1.009,
+    "contain": 1.004,
+    "note": "eye-distance / eye-to-mouth relative to the camera frame; 1.0 = proportions preserved"
+  },
+  "variants": [
+    {
+      "variant": "legacy",
+      "settings": {
+        "alignment": "bbox",
+        "align_template": "ffhq",
+        "mask_mode": "oval",
+        "landmark_smooth": false,
+        "identity_align": "bbox",
+        "fit": "stretch",
+        "landmarker": "yunet"
+      },
+      "landmark_source": "unused",
+      "backend": "stand-in",
+      "frames": 48,
+      "crop_space": {
+        "faces_found_in_crops": 48,
+        "crops": 48,
+        "eye_distance_frac_mean": 0.236,
+        "eye_distance_frac_std": 0.0055,
+        "eye_distance_frac_min_max": [
+          0.2276,
+          0.2521
+        ],
+        "roll_abs_mean_deg": 11.35,
+        "roll_abs_max_deg": 20.46,
+        "landmark_drift_px": 7.33,
+        "template_error_px": 4.68
+      },
+      "output": {
+        "eye_to_mouth_ratio_vs_input": {
+          "mean": 1.0072,
+          "max": 1.0236
+        },
+        "eye_distance_vs_input": {
+          "mean": 1.0132,
+          "max": 1.0249
+        },
+        "changed_outside_face_frac": {
+          "mean": 0.417,
+          "max": 0.4933
+        },
+        "changed_outside_face_level": {
+          "mean": 12.65,
+          "max": 13.33
+        },
+        "flicker_residual": {
+          "mean": 4.383,
+          "max": 4.737
+        }
+      },
+      "runtime_ms_per_frame": {
+        "mean": 12.71,
+        "p95": 18.77
+      },
+      "peak_vram_mb": null
+    },
+    {
+      "variant": "yunet-landmarks",
+      "settings": {
+        "alignment": "landmark",
+        "align_template": "ffhq",
+        "mask_mode": "landmark",
+        "landmark_smooth": true,
+        "identity_align": "arcface",
+        "fit": "cover",
+        "landmarker": "yunet"
+      },
+      "landmark_source": "yunet-refined",
+      "backend": "stand-in",
+      "frames": 48,
+      "crop_space": {
+        "faces_found_in_crops": 48,
+        "crops": 48,
+        "eye_distance_frac_mean": 0.2292,
+        "eye_distance_frac_std": 0.0061,
+        "eye_distance_frac_min_max": [
+          0.2147,
+          0.2433
+        ],
+        "roll_abs_mean_deg": 2.59,
+        "roll_abs_max_deg": 9.15,
+        "landmark_drift_px": 2.284,
+        "template_error_px": 4.95
+      },
+      "output": {
+        "eye_to_mouth_ratio_vs_input": {
+          "mean": 1.0069,
+          "max": 1.0213
+        },
+        "eye_distance_vs_input": {
+          "mean": 1.0126,
+          "max": 1.0228
+        },
+        "changed_outside_face_frac": {
+          "mean": 0.0001,
+          "max": 0.0021
+        },
+        "changed_outside_face_level": {
+          "mean": 2.06,
+          "max": 11.47
+        },
+        "flicker_residual": {
+          "mean": 2.456,
+          "max": 2.853
+        }
+      },
+      "runtime_ms_per_frame": {
+        "mean": 13.14,
+        "p95": 20.18
+      },
+      "peak_vram_mb": null
+    },
+    {
+      "variant": "current",
+      "settings": {
+        "alignment": "landmark",
+        "align_template": "ffhq",
+        "mask_mode": "landmark",
+        "landmark_smooth": true,
+        "identity_align": "arcface",
+        "fit": "cover",
+        "landmarker": "auto"
+      },
+      "landmark_source": "mediapipe",
+      "backend": "stand-in",
+      "frames": 48,
+      "crop_space": {
+        "faces_found_in_crops": 48,
+        "crops": 48,
+        "eye_distance_frac_mean": 0.2473,
+        "eye_distance_frac_std": 0.0012,
+        "eye_distance_frac_min_max": [
+          0.2448,
+          0.2494
+        ],
+        "roll_abs_mean_deg": 0.2,
+        "roll_abs_max_deg": 0.45,
+        "landmark_drift_px": 0.466,
+        "template_error_px": 2.71
+      },
+      "output": {
+        "eye_to_mouth_ratio_vs_input": {
+          "mean": 1.0062,
+          "max": 1.0229
+        },
+        "eye_distance_vs_input": {
+          "mean": 1.0108,
+          "max": 1.0234
+        },
+        "changed_outside_face_frac": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "changed_outside_face_level": {
+          "mean": 0.0,
+          "max": 0.0
+        },
+        "flicker_residual": {
+          "mean": 1.993,
+          "max": 2.123
+        }
+      },
+      "runtime_ms_per_frame": {
+        "mean": 22.84,
+        "p95": 32.26
+      },
+      "peak_vram_mb": null
+    }
+  ],
+  "files": {
+    "sheet": "sheet.jpg",
+    "crops": "crops.jpg",
+    "dir": "final"
+  }
+}
