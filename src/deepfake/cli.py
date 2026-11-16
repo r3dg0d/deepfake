@@ -811,6 +811,17 @@ def models_verify(model, all_models, load, as_json):
                                    "(repair with: deepfake models reinstall <name> --yes)")
 
 
+@models_group.command("repair")
+@click.argument("model")
+@click.option("--yes", is_flag=True, help="Acknowledge licenses/size and download what is missing")
+def models_repair(model, yes):
+    """Re-hash every file and download only the missing or corrupt ones."""
+    try:
+        click.echo(install_model(model, yes=yes, progress=_cli_progress()))
+    except (KeyError, RuntimeError) as e:
+        raise click.ClickException(str(e)) from e
+
+
 @models_group.command("reinstall")
 @click.argument("model", required=False)
 @click.option("--all", "all_models", is_flag=True, help="Redownload every core model")
@@ -818,18 +829,27 @@ def models_verify(model, all_models, load, as_json):
 @click.option("--keep-rollback", is_flag=True, help="Keep the previous files under models/.rollback/")
 @click.option("--no-load-check", is_flag=True, help="Skip the GPU load + sample inference gate")
 def models_reinstall(model, all_models, yes, keep_rollback, no_load_check):
-    """Force a fresh, staged download; old files stay in place until the new ones pass."""
+    """Force a fresh download; old files stay in place until the new ones pass."""
+    from .experimental_models import manifests
     from .model_store import ModelStoreError, install
 
     names = _core_and_installed(all_models, model)
+    known = {m.name: m.meta for m in list_models()}
     if not yes:
         for n in names:
-            m = CATALOG.get(n, {})
+            m = known.get(n, {})
             click.echo(f"{n}: {m.get('size_hint')}\n  weights: {m.get('weights_license')}\n  source: {m.get('source')}")
         raise click.ClickException("re-run with --yes to redownload")
     failed = []
     for n in names:
         click.echo(f"== {n}")
+        if n in manifests():  # experimental bundles: file-by-file replacement, each verified before it lands
+            try:
+                click.echo(install_model(n, yes=True, force=True, progress=_cli_progress()))
+            except RuntimeError as e:
+                failed.append(n)
+                click.echo(f"{n}: FAILED: {e}", err=True)
+            continue
         try:
             rec = install(n, force=True, progress=_cli_progress(), load_check=not no_load_check,
                           keep_rollback=keep_rollback, log=click.echo)
@@ -888,6 +908,35 @@ def experimental_configure(backend, checkout, python_path):
     click.echo(f"Configured {backend}; run experimental doctor and models verify {backend} before rendering.")
 
 
+@experimental_group.command("enable")
+@click.option("--backend", required=True, type=click.Choice(["liveportrait", "personalive", "editalive"]))
+@click.option("--memory-limit-gb", type=float, default=None,
+              help="Host RAM ceiling for the isolated worker (default: total RAM minus a desktop reserve).")
+def experimental_enable(backend, memory_limit_gb):
+    """Re-enable a disabled backend. Isolated workers always run under the host memory guard."""
+    from .engines.experimental.adapters import backend_status, set_backend_enabled
+
+    try:
+        set_backend_enabled(backend, True, memory_limit_gb=memory_limit_gb)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+    status = backend_status(backend)
+    plan = status.get("memory")
+    click.echo(f"{backend}: enabled; {status['status']}"
+               + (f"\nmemory guard: {plan['limit_gb']} GiB ceiling of {plan['total_gb']} GiB host RAM ({plan['method']})" if plan else ""))
+
+
+@experimental_group.command("disable")
+@click.option("--backend", required=True, type=click.Choice(["liveportrait", "personalive", "editalive"]))
+@click.option("--reason", default="", help="Shown in the control center and in doctor output.")
+def experimental_disable(backend, reason):
+    """Disable a backend until it is enabled again."""
+    from .engines.experimental.adapters import set_backend_enabled
+
+    set_backend_enabled(backend, False, reason=reason)
+    click.echo(f"{backend}: disabled")
+
+
 @main.command("app")
 def app_cmd():
     """Open the Quickshell control center without activating a camera."""
@@ -938,6 +987,7 @@ def _run_experimental_video(path, reference, cfg, kwargs):
             fps = cap.get(cv2.CAP_PROP_FPS) or 25
             size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
             kwargs["audio_from"] = path
+            session.bus.update(state="processing", loading_stage="Exporting with the disclosure watermark")
             sink = _make_sink(kwargs, cfg, fps=fps, size=size)
             frames = 0
             start = time.monotonic()
@@ -952,7 +1002,7 @@ def _run_experimental_video(path, reference, cfg, kwargs):
             summary.update(output_frames=frames, output_timeline_fps=fps, export_wall_s=time.monotonic() - start,
                            streaming=False, framegen=False)
             summary.setdefault("native_inference_fps", None)
-            session.bus.update(progress_pct=100, frames=frames)
+            session.bus.update(progress_pct=100, frames=frames, loading_stage="Finished", worker_summary=summary)
             click.echo(json.dumps(summary, indent=2))
     except (RuntimeError, InterruptedError) as e:
         session.bus.update(error=str(e), state="error")
@@ -997,38 +1047,47 @@ def desktop_install(executable):
 
 
 @desktop_group.command("model-job", hidden=True)
-@click.argument("action", type=click.Choice(["install_model", "verify_model", "remove_model", "reinstall_model"]))
+@click.argument("action", type=click.Choice(["install_model", "repair_model", "verify_model", "remove_model", "reinstall_model"]))
 @click.argument("model")
 def desktop_model_job(action, model):
-    from .experimental_models import install, manifests
     from .ipc import state_dir, write_json_atomic
     from .models import remove_model, verify_model
 
     path = state_dir() / "model-job.json"
-    status = {"state": "running", "action": action, "model": model, "pid": os.getpid()}
+    status = {"state": "running", "action": action, "model": model, "pid": os.getpid(), "started_at": time.time()}
     write_json_atomic(path, status)
+    last = [0.0]
 
     def progress(filename, done, total):
         status.update(file=filename, bytes=done, total_bytes=total)
+        now = time.monotonic()
+        if now - last[0] >= 0.25 or (total and done >= total):  # a state file per MiB would only wear the disk
+            last[0] = now
+            write_json_atomic(path, status)
+
+    def stage(text):
+        status.update(stage=text)
         write_json_atomic(path, status)
 
     try:
-        if action == "install_model":
-            result = install(model, yes=True, progress=progress) if model in manifests() else install_model(model, yes=True, progress=progress)
-        elif action == "reinstall_model":
-            result = install_model(model, yes=True, force=True, progress=progress)
+        if action in {"install_model", "repair_model", "reinstall_model"}:
+            stage({"install_model": "Downloading", "repair_model": "Checking files", "reinstall_model": "Redownloading"}[action])
+            result = install_model(model, yes=True, force=action == "reinstall_model", progress=progress, stage=stage)
         elif action == "verify_model":
-            status.update(file="re-hashing and loading on the GPU")
-            write_json_atomic(path, status)
-            result = verify_model(model, load=model in CATALOG)
+            stage("Re-hashing every file" + (" and loading on the GPU" if model in CATALOG else ""))
+            # core models report (file, index, count); experimental bundles report bytes
+            core_progress = lambda f, i, n: (status.update(file=f"{f} ({i + 1}/{n})"), write_json_atomic(path, status))  # noqa: E731
+            result = verify_model(model, progress=core_progress if model in CATALOG else progress, load=model in CATALOG)
             if not result["ok"]:
                 bad = [f["path"] + ": " + str(f.get("reason")) for f in result.get("files", []) if not f.get("ok")]
-                raise RuntimeError("; ".join(bad) or (result.get("load_check") or {}).get("error") or "verification failed")
+                bad += [f"{f}: {kind}" for kind in ("missing", "corrupt") for f in result.get(kind) or []]
+                raise RuntimeError("; ".join(bad[:6]) + (f" (+{len(bad) - 6} more)" if len(bad) > 6 else "")
+                                   or (result.get("load_check") or {}).get("error") or "verification failed")
         else:
             result = remove_model(model, yes=True)
-        status.update(state="complete", result=result)
-    except Exception as e:
-        status.update(state="error", error=str(e))
+        status.update(state="complete", result=result, finished_at=time.time())
+    except Exception as e:  # noqa: BLE001 - every failure must reach the control center
+        status.update(state="error", error=str(e), finished_at=time.time())
     write_json_atomic(path, status)
 
 

@@ -152,15 +152,21 @@ def list_models() -> list[ModelInfo]:
             ModelInfo(name=name, installed=bool(is_in), path=path if path.exists() else None,
                       meta={**meta, "integrity": integrity, "load_check_ok": (rec.get("load_check") or {}).get("ok")})
         )
-    from .experimental_models import manifests
+    from .experimental_models import integrity, manifests
 
     for name, meta in manifests().items():
         path = models_dir() / name
-        present = bool(meta["files"]) and not meta.get("blocked") and all(
-            (path / f["path"]).is_file() and (path / f["path"]).stat().st_size == f["size"] for f in meta["files"])
-        out.append(ModelInfo(name=name, installed=present, meta={**meta, "experimental": True,
-                            "size_hint": f"{sum(f['size'] for f in meta['files']) / 2**30:.2f} GiB"},
-                             path=path if path.exists() else None))
+        sizes = [(f["size"], (path / f["path"])) for f in meta["files"]]
+        have = sum(size for size, p in sizes if p.is_file() and p.stat().st_size == size)
+        total = sum(size for size, _ in sizes)
+        present = bool(sizes) and not meta.get("blocked") and have == total
+        # The per-file list (hundreds of rows for EditaLive) is not part of the catalog view.
+        summary = {k: v for k, v in meta.items() if k != "files"}
+        out.append(ModelInfo(name=name, installed=present, meta={
+            **summary, "experimental": True, "file_count": len(sizes), "size_bytes": total, "present_bytes": have,
+            "size_hint": f"{total / 2**30:.2f} GiB",
+            "integrity": integrity(name) if present else ("partial" if have else "not installed")},
+            path=path if path.exists() else None))
     return out
 
 
@@ -201,11 +207,13 @@ def file_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def install_model(name: str, *, yes: bool = False, force: bool = False, progress=None, load_check: bool = True) -> str:
+def install_model(name: str, *, yes: bool = False, force: bool = False, progress=None, load_check: bool = True,
+                  stage=None) -> str:
+    """Install or repair ``name``; ``force`` redownloads everything (old files stay until the new ones verify)."""
     from .experimental_models import install, manifests
 
     if name in manifests():
-        return install(name, yes=yes, progress=progress)
+        return install(name, yes=yes, progress=progress, force=force, stage=stage)
     if name not in CATALOG:
         raise KeyError(f"unknown model '{name}'. Known: {', '.join(sorted(CATALOG))}")
     meta = CATALOG[name]
@@ -237,12 +245,24 @@ def _install_core(name: str, *, force: bool, progress=None, load_check: bool = T
     return "\n".join(lines)
 
 
-def verify_model(name: str, progress=None, *, load: bool = False) -> dict[str, Any]:
-    """Re-hash every installed file against its pinned or install-time digest; optionally load + infer."""
+def verify_model(name: str, progress=None, *, load: bool = False, quick: bool = False) -> dict[str, Any]:
+    """Re-hash every installed file against its pinned or install-time digest; optionally load + infer.
+
+    ``quick`` (experimental models) trusts files whose size and mtime are unchanged since their last
+    SHA-256 check, so a render does not re-hash the whole bundle on every start.
+    """
     from .experimental_models import manifests, verify
 
     if name in manifests():
-        return verify(name, progress=progress)
+        result = verify(name, progress=progress, quick=quick)
+        rec = _load_installed().get(name)
+        if rec is not None and not quick:
+            import time
+
+            rec.pop("name", None)
+            _mark_installed(name, {**rec, "integrity": "verified" if result["ok"] else "failed",
+                                   "verified_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+        return result
     if name not in CATALOG:
         raise KeyError(f"Unknown model {name}")
     from .model_store import verify as store_verify
