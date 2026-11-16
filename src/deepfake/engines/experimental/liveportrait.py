@@ -1,7 +1,9 @@
 """LivePortrait head reenactment through official neural model classes.
 
-Single-subject, Haar-aligned experimental integration. Hair inside the head crop
-is generated; hand occlusions and background reconstruction are not segmented.
+Single-subject experimental integration aligned on the shared face detector (YuNet, Haar on
+OpenCV 4 without the YuNet weights). The generated head crop is rotoscoped into the frame
+through a person matte when the PP-HumanSeg weights are installed (see ``matting.py``);
+without them the whole crop is blended as a soft rectangle. Hand occlusions are not handled.
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ...detect import OpenCVHaarDetector, align_crop
+from ...detect import align_crop, create_detector
 from ...ipc import read_json
 from ...metrics import MetricsTracker
 from ...paths import models_dir
@@ -69,8 +71,22 @@ class LivePortraitEngine(TransformationEngine):
             self.torch = torch
         except ImportError as e:
             raise EngineUnavailable(f"LivePortrait dependency unavailable ({e}). Install the experimental-head extra.") from e
-        self.detector = OpenCVHaarDetector()
+        self._init_runtime(config)
+
+    def _init_runtime(self, config):
+        """Detector, matte and tracking state: everything that does not need the neural weights."""
+        from ...matting import HeadMatte, parse_background, resolve_rotoscope
+
+        self.config = config
+        # OpenCV 5 ships no Haar cascades; the shared factory prefers YuNet and falls back to Haar.
+        self.detector = create_detector("auto")
+        background = parse_background(getattr(config, "background", "keep"))
+        enabled, note = resolve_rotoscope(getattr(config, "rotoscope", None), background)
+        self.matte = HeadMatte(background, getattr(config, "matte_scope", "person")) if enabled else None
+        if note:
+            print(f"deepfake: {note}", file=sys.stderr, flush=True)
         self.metrics = MetricsTracker()
+        self.face_box = None
         self.first_driver = None
         self.last_box = None
         self.tracking_lost = False
@@ -96,6 +112,7 @@ class LivePortraitEngine(TransformationEngine):
                 raise EngineUnavailable("Subject left the tracked region; restart the session to select a subject explicitly")
         if not reference:
             self.last_box = box
+            self.face_box = box
         return align_crop(image, box, size=256, pad=0.8)
 
     def prepare_reference(self, reference):
@@ -119,8 +136,11 @@ class LivePortraitEngine(TransformationEngine):
         start = time.perf_counter()
         crop, box = self._crop(frame)
         self.sequence += 1
+        if self.matte is not None:
+            self.matte.begin(frame, crop)  # camera-side segmentation overlaps the GPU inference below
         if crop is None:
-            return frame, self.metrics.record(inference_ms=0, total_ms=(time.perf_counter() - start) * 1000)
+            out = self.matte.passthrough(frame) if self.matte is not None else frame
+            return out, self.metrics.record(inference_ms=0, total_ms=(time.perf_counter() - start) * 1000)
         infer_start = time.perf_counter()
         with self.torch.inference_mode():
             driver = self.model.get_kp_info(self.model.prepare_source(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)))
@@ -139,21 +159,37 @@ class LivePortraitEngine(TransformationEngine):
             generated = self.model.warp_decode(self.feature, self.source_kp, keypoints)
             output = self.model.parse_output(generated["out"])[0]
         infer_ms = (time.perf_counter() - infer_start) * 1000
-        # Blend the complete generated head crop. This is not an occlusion mask.
+        out = self._paste(frame, cv2.cvtColor(output, cv2.COLOR_RGB2BGR), box)
+        return out, self.metrics.record(inference_ms=infer_ms, total_ms=(time.perf_counter() - start) * 1000)
+
+    def _paste(self, frame, generated_bgr, box):
+        """Put the generated head crop back: through the person matte, or as a soft rectangle without one."""
+        import cv2
+
+        if self.matte is not None:
+            return self.matte.composite(frame, generated_bgr, box, self.face_box)
         x, y, w, h = box.x, box.y, box.w, box.h
-        generated_bgr = cv2.resize(cv2.cvtColor(output, cv2.COLOR_RGB2BGR), (w, h))
+        generated_bgr = cv2.resize(generated_bgr, (w, h))
         mask = np.zeros((h, w), dtype=np.float32)
         margin = max(1, min(w, h) // 16)
         mask[margin:-margin, margin:-margin] = 1
         mask = cv2.GaussianBlur(mask, (0, 0), max(1, margin / 2))[..., None]
         out = frame.copy()
         out[y:y+h, x:x+w] = np.clip(generated_bgr * mask + frame[y:y+h, x:x+w] * (1-mask), 0, 255).astype(np.uint8)
-        return out, self.metrics.record(inference_ms=infer_ms, total_ms=(time.perf_counter() - start) * 1000)
+        return out
+
+    def live_metrics(self):
+        """Extra per-session numbers merged into the live stats snapshot."""
+        matte = self.matte
+        return {"rotoscope": matte is not None, "matte_ms": None if matte is None else matte.matte_ms,
+                "background": matte.background.describe() if matte is not None else "keep"}
 
     def capabilities(self):
         return EngineCapabilities(supports_head=True, supports_streaming=True, supports_cuda=True)
 
     def unload(self):
+        if getattr(self, "matte", None) is not None:
+            self.matte.close()
         for attr in ("feature", "source_info", "source_kp", "first_driver", "model"):
             if hasattr(self, attr):
                 delattr(self, attr)

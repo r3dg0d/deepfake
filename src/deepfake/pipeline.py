@@ -42,6 +42,10 @@ class PipelineConfig:
     swap_precision: str = "fp32"
     async_detect: bool = False  # live mode: detection on its own thread
     frame_gen: FrameGenSettings | None = None
+    # LivePortrait head engine only (see matting.py)
+    rotoscope: bool | None = None  # None = auto: on when the PP-HumanSeg weights are installed
+    background: str = "keep"  # keep | blur | green | blue | black | white | #rrggbb | image path
+    matte_scope: str = "person"  # person: keep the real body below the chin; head: only the generated head
 
 
 class FaceSwapPipeline:

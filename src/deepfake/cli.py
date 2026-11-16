@@ -68,6 +68,14 @@ def _common_io_options(fn):
         click.option("--model-backend", type=click.Choice(["liveportrait", "personalive", "editalive"]), default=None),
         click.option("--reference", type=click.Path(path_type=Path, exists=True), default=None),
         click.option("--prompt", default="", help="Appearance instruction for EditaLive offline rendering."),
+        click.option("--rotoscope/--no-rotoscope", default=None,
+                     help="LivePortrait head: cut the generated head out with a person matte instead of pasting "
+                          "its square crop (default: on when the pphumanseg weights are installed)."),
+        click.option("--background", default=None, metavar="[keep|blur|green|blue|black|white|#rrggbb|IMAGE]",
+                     help="LivePortrait head: replace the camera background (needs the matte). Default: keep."),
+        click.option("--matte-scope", type=click.Choice(["person", "head"]), default=None,
+                     help="With --background: keep the real body below the chin (person, default) or only the "
+                          "generated head (head)."),
         click.option("--encoder", type=click.Choice(["auto", "libx264", "h264_nvenc"]), default=None),
         click.option("--watermark/--no-watermark", default=None),
         click.option("--consent-ack", is_flag=True, hidden=True),
@@ -218,6 +226,27 @@ def _fg_from_kwargs(kwargs: dict, source_fps: float) -> FrameGenSettings:
         raise click.BadParameter(str(e)) from e
 
 
+def _matte_options(kwargs: dict, engine: str, mode: str, model_backend: str | None) -> dict:
+    """Validate --rotoscope / --background / --matte-scope; they belong to the LivePortrait head engine."""
+    from .matting import parse_background
+
+    given = [flag for flag, key in (("--rotoscope", "rotoscope"), ("--background", "background"),
+                                    ("--matte-scope", "matte_scope")) if kwargs.get(key) is not None]
+    head = engine == "experimental" and mode == "head" and model_backend == "liveportrait"
+    if given and not head:
+        raise click.UsageError(f"{', '.join(given)} only apply to --engine experimental --mode head (LivePortrait)")
+    try:
+        background = parse_background(kwargs.get("background"))
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint="--background") from e
+    if kwargs.get("rotoscope") is False and background.replaces:
+        raise click.UsageError("--background needs the matte: remove --no-rotoscope")
+    if kwargs.get("matte_scope") == "head" and not background.replaces:
+        raise click.UsageError("--matte-scope head only has an effect with --background")
+    return {"rotoscope": kwargs.get("rotoscope"), "background": kwargs.get("background") or "keep",
+            "matte_scope": kwargs.get("matte_scope") or "person"}
+
+
 def _cfg_from_kwargs(kwargs: dict):
     from .presets import Preset
 
@@ -226,12 +255,16 @@ def _cfg_from_kwargs(kwargs: dict):
     backend = kwargs.get("backend")
     if backend == "auto":
         backend = None
+    engine = kwargs.get("engine", "alphaface")
+    mode = kwargs.get("mode") or ("head" if engine == "experimental" else "face")
+    model_backend = kwargs.get("model_backend") or ("liveportrait" if engine == "experimental" and mode != "fullbody" else None)
     cfg = build_config(
         preset,
         device=device,
-        engine=kwargs.get("engine", "alphaface"),
-        mode=kwargs.get("mode") or ("head" if kwargs.get("engine") == "experimental" else "face"),
-        model_backend=kwargs.get("model_backend") or ("liveportrait" if kwargs.get("engine") == "experimental" and kwargs.get("mode") != "fullbody" else None),
+        engine=engine,
+        mode=mode,
+        model_backend=model_backend,
+        **_matte_options(kwargs, engine, mode, model_backend),
         preview_original=bool(kwargs.get("preview", True)),
         backend=backend,
         face_index=kwargs.get("face_index") or 0,

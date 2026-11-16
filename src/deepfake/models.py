@@ -40,6 +40,19 @@ CATALOG: dict[str, dict[str, Any]] = {
         "notes": "Default face detector (cv2.FaceDetectorYN): boxes + 5 landmarks, works on OpenCV 4.x and 5.x. "
                  "OpenCV 5 removed the Haar cascades the old detector used.",
     },
+    "pphumanseg": {
+        "name": "pphumanseg",
+        "backend": "matting",
+        "source": "opencv/human_segmentation_pphumanseg @ e876e63 (OpenCV Zoo, official Hugging Face repo)",
+        "paper": "PP-HumanSeg (Chu et al., WACV 2022 workshops, arXiv:2112.07146)",
+        "code_license": "Apache-2.0 (PaddleSeg / OpenCV Zoo)",
+        "weights_license": "Apache-2.0",
+        "size_hint": "5.9 MB",
+        "checksum": "Hugging Face LFS SHA-256, identical to the opencv_zoo Git LFS pointer (pinned)",
+        "install": "staged https + sha256",
+        "notes": "Person segmentation for real-time rotoscoping and background replacement in the LivePortrait "
+                 "head engine (--rotoscope, --background). Runs on the CPU through cv2.dnn.",
+    },
     "alphaface": {
         "name": "alphaface",
         "backend": "alphaface",

@@ -480,6 +480,8 @@ def _run_realtime(
             now = time.monotonic()
             if now - last_print >= 1.0:
                 snap = stats.snapshot(pacer)
+                if hasattr(pipe, "live_metrics"):
+                    snap.update(pipe.live_metrics())
                 if print_stats:
                     print(format_live(snap), flush=True)
                 if on_stats is not None:
@@ -617,7 +619,8 @@ def _run_offline(input_video, source_image, sink_factory, cfg, fg, *, print_stat
                           "output_fps": None, "source_frames": counts["source_frames"],
                           "frames": counts["source_frames"], "generated_frames": counts["generated_frames"],
                           "swap_latency_ms": swap_ms[-1], "width": w, "height": h,
-                          "latency_p95_ms": float(np.percentile(swap_ms[-240:], 95))})
+                          "latency_p95_ms": float(np.percentile(swap_ms[-240:], 95)),
+                          **(pipe.live_metrics() if hasattr(pipe, "live_metrics") else {})})
             if cfg.max_frames is not None and counts["source_frames"] >= cfg.max_frames:
                 break
             if print_stats and counts["source_frames"] % 30 == 0:

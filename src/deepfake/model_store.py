@@ -76,6 +76,15 @@ CORE: dict[str, dict[str, Any]] = {
              "trust": "upstream", "format": "onnx"},
         ],
     },
+    "pphumanseg": {
+        "files": [
+            {"path": "human_segmentation_pphumanseg_2023mar.onnx",
+             "url": "https://huggingface.co/opencv/human_segmentation_pphumanseg/resolve/"
+                    "e876e63603f6c65c1a22576bfd5fc7c07ecf9eb9/human_segmentation_pphumanseg_2023mar.onnx",
+             "size": 6163938, "sha256": "552d8a984054e59b5d773d24b9b12022b22046ceb2bbc4c9aaeaceb36a9ddf24",
+             "trust": "upstream", "format": "onnx"},
+        ],
+    },
     "alphaface": {
         "files": [
             {"path": "alphaface_demo.pt", "url": DRIVE.format("18ZOQB3WmIFnMwi1GqBroFFEOuSNKWpZQ"),
