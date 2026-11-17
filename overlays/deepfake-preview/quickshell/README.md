@@ -1,17 +1,22 @@
-# Galaxy Deepfake
+# Galaxy Deepfake control center
 
-Purple galaxy Quickshell webcam status panel. Reads Deepfake session.json and
-preview.png under $XDG_STATE_HOME/deepfake (default ~/.local/state/deepfake).
-Displays live preview, source, resolution, input, frame-generation status,
-FPS, latency, GPU use and VRAM. Stats older than 15 seconds show offline.
+Quickshell shell for Deepfake in the purple Galaxy theme. `deepfake app` opens it; see
+`docs/quickshell-app.md` for the pages and `docs/galaxy-theme.md` for the design tokens.
 
-Drag the header to move; use the compositor's resize gesture to resize the
-floating window. X hides only the panel. Stop webcam sends a stop command
-through Deepfake's existing control.json IPC. Preview updates at 10 FPS to
-limit UI overhead; session output frame generation is unaffected.
+- `shell.qml` → `ControlCenter.qml`: backend state, request queue, readiness rules, dialogs, toasts,
+  window frame and sidebar.
+- `StudioPage.qml`, `CharactersPage.qml`, `ModelsPage.qml`, `RenderPage.qml`, `PerformancePage.qml`,
+  `SettingsPage.qml`: one file per page; each receives the shell as `app`.
+- `Galaxy*.qml`, `Starfield.qml`: the design system shared with the aivoice widget.
+- `Card`, `Segmented`, `ChoiceRow`, `CheckRow`, `KeyValue`, `PathField`, `LogView`, `PreviewPane`,
+  `TextLabel`, `TextHint`: components of this app only.
 
-The ~/.local/bin/deepfake wrapper sets DEEPFAKE_WIDGET_DIR so `deepfake webcam`
-starts this widget automatically. --no-widget still works. Run
-`~/.local/bin/deepfake-widget` to reopen a hidden panel. No camera opens when
-launching the widget by itself. No unsupported runtime face/framegen toggles
-are exposed. Deepfake currently only records those pending requests.
+Everything shown comes from `deepfake desktop request` (set `DEEPFAKE_CLI` to choose the
+executable). No camera opens when the window does. The preview refreshes at 10 Hz, only while a
+session is live and the Studio is visible.
+
+Review without a desktop: `DEEPFAKE_UI_PAGE=Models DEEPFAKE_UI_SIZE=1240x840
+DEEPFAKE_UI_SCREENSHOT=/tmp/models.png DEEPFAKE_UI_SCREENSHOT_QUIT=1 qs -p .` or, without
+Quickshell, `python tests/quickshell_shim/run.py overlays/deepfake-preview/quickshell`.
+
+`run.sh`, `control.py` and `noqs.sh` are the older launcher helpers and are kept for existing setups.

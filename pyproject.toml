@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deepfake"
-version = "0.4.0.dev0"
-description = "Linux real-time face-swap CLI wrapping AlphaFace research (disclosed synthetic media)"
+version = "0.5.0.dev0"
+description = "Linux real-time face-swap and head-animation CLI with a Quickshell control center (disclosed synthetic media)"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -28,6 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
+ui-test = ["PySide6-Essentials>=6.6"]  # renders the control center in tests without Quickshell
 cuda = []  # torch/cuda installed by user for AlphaFace; not forced
 insightface = ["insightface>=0.7", "onnxruntime>=1.16"]
 gdown = ["gdown>=5.0"]
@@ -42,7 +43,7 @@ deepfake = "deepfake.cli:main"
 packages = ["src/deepfake"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/deepfake", "tests", "docs", "overlays", "scripts", "flake.nix", "flake.lock", "pyproject.toml", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md", "STATUS.md"]
+include = ["src/deepfake", "tests", "docs", "overlays", "scripts", "flake.nix", "flake.lock", "pyproject.toml", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "overlays/deepfake-preview/quickshell" = "deepfake/quickshell"
@@ -63,3 +64,7 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# compact Qt property boilerplate of the Quickshell stand-in
+"tests/quickshell_shim/run.py" = ["E701", "E702", "N802"]
