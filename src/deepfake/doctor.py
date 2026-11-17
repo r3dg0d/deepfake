@@ -50,6 +50,13 @@ def run_doctor() -> list[Check]:
     torch_ok = importlib.util.find_spec("torch") is not None
     checks.append(Check("FrameGen", rife_ok and torch_ok, "RIFE + torch" if rife_ok and torch_ok else "missing RIFE weights or torch"))
 
+    # Rotoscoping matte for the LivePortrait head engine (optional)
+    from .matting import INSTALL_HINT, model_installed
+
+    matte_ok = model_installed()
+    checks.append(Check("Rotoscope matte", matte_ok, "PP-HumanSeg (cv2.dnn, CPU)" if matte_ok
+                        else f"not installed: head is pasted as a soft rectangle ({INSTALL_HINT})"))
+
     # Quickshell
     qs_ok, qs_detail = quickshell_available()
     checks.append(Check("Quickshell", qs_ok, qs_detail if qs_ok else qs_detail))

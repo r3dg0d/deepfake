@@ -1,6 +1,89 @@
 # Changelog
 
-## Unreleased
+## 0.5.0.dev0 — unreleased
+
+Development version: everything below is covered by the CPU test suite, but none of it has run
+on a GPU, with a camera or under a real Quickshell yet. See "Validation" at the end.
+
+### Added
+- **Real-time rotoscoping for the LivePortrait head engine.** The generated head is cut out of its
+  square crop with a person matte (PP-HumanSeg, OpenCV Zoo, Apache-2.0, CPU via `cv2.dnn`) instead of
+  being pasted together with the reference image's background. The matte is refined against the image
+  (guided filter), sharpened and smoothed over time. Where the character is smaller than the real
+  head, a clean plate learned from the camera hides what would stick out. On by default once the
+  weights are installed: `deepfake models install pphumanseg --yes`; `--rotoscope/--no-rotoscope`.
+- **Background replacement** for the same engine: `--background blur|green|blue|black|white|#rrggbb|IMAGE`,
+  with `--matte-scope person` (keep the real body below the chin, default) or `head` (only the
+  generated head). Frames without a detected face still get the background treatment.
+- `deepfake models repair NAME --yes`: re-hash every file, download only the missing or damaged ones.
+- `deepfake experimental enable|disable --backend NAME [--memory-limit-gb N]`.
+- Matte time, rotoscope state and background are part of the live session state.
+
+- **Face geometry** for the face swap (from the local working tree, merged into this version):
+  landmark alignment with roll correction, a mask fitted to the face, optional MediaPipe landmarks
+  (`deepfake models install face-landmarker --yes`), One Euro smoothing, camera frame fit, and
+  `deepfake compare` to A/B it against the old box crop. Controls are in **Studio → Face geometry**.
+- Nebula window backdrop and solid translucent cards.
+
+### Fixed
+- **PersonaLive can be downloaded again.** It was blocked because `lambdalabs/sd-image-variations-diffusers`
+  is now an empty repository: the Lambda organisation was renamed and the old name re-registered by
+  someone else. The manifest pins the original repository, `lambda/sd-image-variations-diffusers@42bc0ee`,
+  and `stabilityai/sd-vae-ft-mse@31f26fd` (13 files, 14.47 GiB, each with a SHA-256).
+- **Reinstall and repair work for experimental models** (PersonaLive, EditaLive, LivePortrait), from the
+  CLI and the control center. They were limited to the core models. A forced reinstall replaces each
+  file only after its download passed the checksum.
+- Experimental downloads resume automatically after a dropped connection (5 attempts) instead of
+  failing the whole job, and the disk-space check counts only what still has to be downloaded.
+- **EditaLive could not be loaded from the control center.** Four causes: every render re-hashed the
+  whole 52.7 GiB bundle first (a full check now leaves a stamp, and unchanged files are trusted); the
+  session looked dead while that hash ran; failures were only written to a log nobody was shown; and
+  the checkout, worker Python and the disabled flag could only be changed in a terminal. All four are
+  addressed, see "Control center".
+- **Host memory guard for isolated workers.** The EditaLive worker previously exhausted host RAM and
+  froze the desktop. Workers now run under a ceiling (total RAM minus a desktop reserve, or
+  `--memory-limit-gb`): a systemd user scope with `MemoryMax` and no swap where available, and always
+  a watchdog that stops the worker when it exceeds the ceiling or the host runs low. A backend that
+  was disabled after such an incident stays disabled until it is explicitly enabled.
+- A model job whose process died (crash, reboot) was shown as running forever, which disabled every
+  model button. It is now reported as interrupted and can be resumed.
+- The LivePortrait engine constructed the Haar detector directly and could not load on OpenCV 5,
+  which ships no Haar cascades. It uses the shared detector factory (YuNet first).
+- PP-HumanSeg is read with OpenCV's classic DNN engine: the new graph engine of OpenCV 5.0 returns a
+  matte shifted by about 8 % of the image for this network. The model's load check tests for it.
+- Preferences written by another version (unknown keys, removed values) no longer block Start.
+- Re-running `experimental configure` no longer clears a backend's disabled flag.
+- The snapshot polled by the control center no longer carries EditaLive's 412 per-file rows.
+
+### Control center (UI overhaul)
+- Six pages instead of eight: **Studio, Characters, Models, Render, Performance, Settings**. Camera
+  settings moved to Settings, engine selection into the Studio.
+- **Studio**: preview on the left, an inspector on the right with one engine choice (Face swap, Head,
+  Portrait, Full body) that shows each engine's state, the selected character, the matte and
+  background controls, quality, output and GPU.
+- **Readiness checklist** in place of a silently disabled Start button: each missing piece (consent,
+  character, weights, worker setup, disabled backend, matte model) is listed with the button that fixes it.
+- **Models**: core and experimental groups; Install / Resume, Verify, Repair, Reinstall, Remove; overall
+  download progress in bytes; worker setup (source checkout, worker Python) and "Enable with memory
+  guard" for experimental engines.
+- **Render**: input, output, encoder and prompt; live stage, worker RAM against its ceiling, and the
+  worker log while an isolated render runs; the error of the last render stays visible.
+- Settings save as you edit (no Save buttons). Requests are queued instead of dropped with "please
+  wait". Results and errors appear as toasts; session errors are shown, not only logged.
+- Lists no longer rebuild on every poll, so hover states and half-typed fields survive.
+- Ctrl+1 … 6 switch pages. The old page names in `DEEPFAKE_UI_PAGE` still work.
+
+### Validation
+- About 130 CPU tests, including the matting compositor against the real PP-HumanSeg network and the
+  installer against a local HTTP server (resume, retry, repair, reinstall).
+- The control center was rendered page by page with plain Qt and stand-ins for the Quickshell types
+  (`tests/quickshell_shim`), not under `qs`.
+- **Not run:** LivePortrait with the matte on a GPU, a camera or virtual camera, the PersonaLive and
+  EditaLive workers, the cgroup limit under a real systemd user manager, and the large downloads
+  themselves (their digests come from Hugging Face's LFS metadata; the small files were downloaded
+  and checked).
+
+## 0.4.0.dev0 (development snapshot, never released)
 
 ### v0.4 development
 - Shared transformation-engine interface and AlphaFace adapter preserve the original inference implementation and CLI defaults.

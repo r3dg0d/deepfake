@@ -62,12 +62,39 @@ def _common_io_options(fn):
         click.option("--blend-feather", type=int, default=None),
         click.option("--color-match/--no-color-match", default=None),
         click.option("--temporal-smooth", type=float, default=None),
+        click.option("--align", "alignment", type=click.Choice(["landmark", "bbox"]), default=None,
+                     help="Face crop: landmark = roll-corrected similarity transform (default); "
+                          "bbox = legacy padded detector box."),
+        click.option("--align-template", type=click.Choice(["ffhq", "arcface"]), default=None,
+                     help="Framing of the landmark crop the swap model sees (default ffhq)."),
+        click.option("--mask", "mask_mode", type=click.Choice(["landmark", "oval"]), default=None,
+                     help="Composite mask: landmark = fitted to the face (default); oval = legacy box oval."),
+        click.option("--landmark-smooth/--no-landmark-smooth", default=None,
+                     help="One Euro filter on the landmarks that place the crop (default on)."),
+        click.option("--identity-align", type=click.Choice(["arcface", "bbox"]), default=None,
+                     help="Crop of the identity image for the ArcFace encoder (default arcface)."),
+        click.option("--fit", type=click.Choice(["cover", "contain", "stretch"]), default=None,
+                     help="Capture frame to preset size: cover = crop (default), contain = pad, "
+                          "stretch = legacy (distorts)."),
+        click.option("--landmarker", type=click.Choice(["auto", "mediapipe", "yunet"]), default=None,
+                     help="Alignment points: auto = MediaPipe when installed, else refined YuNet."),
+        click.option("--legacy-geometry", is_flag=True,
+                     help="Shorthand for --align bbox --mask oval --identity-align bbox --fit stretch "
+                          "--no-landmark-smooth (pre-0.4.1 output, for comparison)."),
         click.option("--backend", type=click.Choice(["auto", "alphaface", "inswapper", "passthrough"]), default="auto"),
         click.option("--engine", type=click.Choice(["alphaface", "experimental"]), default="alphaface"),
         click.option("--mode", type=click.Choice(["face", "head", "fullbody"]), default=None),
         click.option("--model-backend", type=click.Choice(["liveportrait", "personalive", "editalive"]), default=None),
         click.option("--reference", type=click.Path(path_type=Path, exists=True), default=None),
         click.option("--prompt", default="", help="Appearance instruction for EditaLive offline rendering."),
+        click.option("--rotoscope/--no-rotoscope", default=None,
+                     help="LivePortrait head: cut the generated head out with a person matte instead of pasting "
+                          "its square crop (default: on when the pphumanseg weights are installed)."),
+        click.option("--background", default=None, metavar="[keep|blur|green|blue|black|white|#rrggbb|IMAGE]",
+                     help="LivePortrait head: replace the camera background (needs the matte). Default: keep."),
+        click.option("--matte-scope", type=click.Choice(["person", "head"]), default=None,
+                     help="With --background: keep the real body below the chin (person, default) or only the "
+                          "generated head (head)."),
         click.option("--encoder", type=click.Choice(["auto", "libx264", "h264_nvenc"]), default=None),
         click.option("--watermark/--no-watermark", default=None),
         click.option("--consent-ack", is_flag=True, hidden=True),
@@ -189,6 +216,13 @@ def _apply_config_defaults(kwargs: dict) -> dict:
         kwargs["show_metrics"] = cfg.show_metrics
     if kwargs.get("frame_gen") is None and not kwargs.get("no_frame_gen"):
         kwargs["frame_gen"] = cfg.frame_generation or "auto"
+    legacy = {"alignment": "bbox", "align_template": "ffhq", "mask_mode": "oval", "landmark_smooth": False,
+              "identity_align": "bbox", "fit": "stretch", "landmarker": "yunet"}
+    for key in legacy:
+        if kwargs.get("legacy_geometry"):
+            kwargs[key] = legacy[key]
+        elif kwargs.get(key) is None:
+            kwargs[key] = getattr(cfg, key)
     return kwargs
 
 
@@ -218,6 +252,27 @@ def _fg_from_kwargs(kwargs: dict, source_fps: float) -> FrameGenSettings:
         raise click.BadParameter(str(e)) from e
 
 
+def _matte_options(kwargs: dict, engine: str, mode: str, model_backend: str | None) -> dict:
+    """Validate --rotoscope / --background / --matte-scope; they belong to the LivePortrait head engine."""
+    from .matting import parse_background
+
+    given = [flag for flag, key in (("--rotoscope", "rotoscope"), ("--background", "background"),
+                                    ("--matte-scope", "matte_scope")) if kwargs.get(key) is not None]
+    head = engine == "experimental" and mode == "head" and model_backend == "liveportrait"
+    if given and not head:
+        raise click.UsageError(f"{', '.join(given)} only apply to --engine experimental --mode head (LivePortrait)")
+    try:
+        background = parse_background(kwargs.get("background"))
+    except ValueError as e:
+        raise click.BadParameter(str(e), param_hint="--background") from e
+    if kwargs.get("rotoscope") is False and background.replaces:
+        raise click.UsageError("--background needs the matte: remove --no-rotoscope")
+    if kwargs.get("matte_scope") == "head" and not background.replaces:
+        raise click.UsageError("--matte-scope head only has an effect with --background")
+    return {"rotoscope": kwargs.get("rotoscope"), "background": kwargs.get("background") or "keep",
+            "matte_scope": kwargs.get("matte_scope") or "person"}
+
+
 def _cfg_from_kwargs(kwargs: dict):
     from .presets import Preset
 
@@ -226,12 +281,16 @@ def _cfg_from_kwargs(kwargs: dict):
     backend = kwargs.get("backend")
     if backend == "auto":
         backend = None
+    engine = kwargs.get("engine", "alphaface")
+    mode = kwargs.get("mode") or ("head" if engine == "experimental" else "face")
+    model_backend = kwargs.get("model_backend") or ("liveportrait" if engine == "experimental" and mode != "fullbody" else None)
     cfg = build_config(
         preset,
         device=device,
-        engine=kwargs.get("engine", "alphaface"),
-        mode=kwargs.get("mode") or ("head" if kwargs.get("engine") == "experimental" else "face"),
-        model_backend=kwargs.get("model_backend") or ("liveportrait" if kwargs.get("engine") == "experimental" and kwargs.get("mode") != "fullbody" else None),
+        engine=engine,
+        mode=mode,
+        model_backend=model_backend,
+        **_matte_options(kwargs, engine, mode, model_backend),
         preview_original=bool(kwargs.get("preview", True)),
         backend=backend,
         face_index=kwargs.get("face_index") or 0,
@@ -244,6 +303,8 @@ def _cfg_from_kwargs(kwargs: dict):
         max_frames=kwargs.get("max_frames"),
         allow_passthrough=(backend == "passthrough"),
         swap_precision=_swap_precision(kwargs),
+        **{k: kwargs[k] for k in ("alignment", "align_template", "mask_mode", "landmark_smooth",
+                                  "identity_align", "fit", "landmarker") if kwargs.get(k) is not None},
     )
     w, h, fps = kwargs.get("width"), kwargs.get("height"), kwargs.get("fps")
     if w or h or fps:
@@ -295,6 +356,7 @@ def _run_live(kwargs: dict, source: Path, cfg, *, mode: str) -> None:
         resolution=(cfg.preset.width, cfg.preset.height),
         widget=_widget_flag(kwargs),
     )
+    session.bus.update(geometry=cfg.geometry_settings())
     session.start()
     try:
         return _run_live_started(kwargs, source, cfg, mode=mode, session=session)
@@ -479,7 +541,8 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
         resolution=(w, h),
         widget=_widget_flag(kwargs),
     )
-    session.bus.update(input_video=str(path), output_video=str(kwargs.get("output_video") or ""))
+    session.bus.update(input_video=str(path), output_video=str(kwargs.get("output_video") or ""),
+                       geometry=cfg.geometry_settings())
     session.start()
     fg = _fg_from_kwargs(kwargs, src_fps)
     if fg.enabled:
@@ -522,6 +585,12 @@ def video_cmd(input_video: Path | None, input_opt: Path | None, **kwargs):
                 framegen_multiplier=fg.factor,
                 generated_frames=summary.get("generated_frames"),
             )
+        out_path = kwargs.get("output_video")
+        if out_path is not None and Path(out_path).is_file():
+            from .provenance import write_sidecar
+
+            summary["provenance"] = str(write_sidecar(Path(out_path), cfg, input_video=path, source=source,
+                                                      frame_gen=fg, summary=summary))
         click.echo(json.dumps(summary, indent=2))
     except click.ClickException:
         raise
@@ -606,6 +675,45 @@ def doctor_cmd():
     critical = {"AlphaFace", "CUDA"}
     if any((not c.ok) and c.name in critical for c in checks):
         sys.exit(1)
+
+
+@main.command("compare")
+@click.option("-i", "--input", "input_path", type=click.Path(path_type=Path, exists=True), default=None,
+              help="Video or image you are authorized to process. Omit to use the bundled synthetic fixture.")
+@click.option("-f", "--source", "source_path", type=click.Path(path_type=Path, exists=True), default=None,
+              help="Identity image (needed for a real swap backend).")
+@click.option("-o", "--out", "out_dir", type=click.Path(path_type=Path), default=Path("geometry-compare"), show_default=True)
+@click.option("--backend", type=click.Choice(["auto", "alphaface", "inswapper", "passthrough", "stand-in"]),
+              default="auto", show_default=True,
+              help="stand-in = a labelled test double (tint + blur) that makes mask edges visible without weights.")
+@click.option("--frames", default=48, show_default=True, help="Frames to process (bounded).")
+@click.option("--variant", "variants", multiple=True,
+              help="Variants to run (default: legacy and current). name or name:key=value,key=value")
+@click.option("--preset", default="balanced", show_default=True)
+@click.option("--device", default="auto", show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+@click.option("--consent-ack", is_flag=True, hidden=True)
+def compare_cmd(input_path, source_path, out_dir, backend, frames, variants, preset, device, as_json, consent_ack):
+    """A/B the face geometry on the same frames: legacy box crop vs landmark alignment.
+
+    Writes per-variant previews, a side-by-side sheet and report.json (eye proportions,
+    crop-space landmark drift, mask-edge change, flicker, runtime, peak VRAM) to --out.
+    """
+    from .geometry_report import run_compare
+
+    if input_path is not None:
+        require_consent(ack=consent_ack, watermark=True)
+    try:
+        report = run_compare(input_path=input_path, source_path=source_path, out_dir=out_dir, backend=backend,
+                             frames=frames, variants=list(variants), preset=preset, device=resolve_cuda(device))
+    except (RuntimeError, ValueError, KeyError) as e:
+        raise click.ClickException(str(e)) from e
+    if as_json:
+        click.echo(json.dumps(report, indent=2))
+        return
+    from .geometry_report import format_report
+
+    click.echo(format_report(report))
 
 
 @main.group("config")
@@ -778,6 +886,17 @@ def models_verify(model, all_models, load, as_json):
                                    "(repair with: deepfake models reinstall <name> --yes)")
 
 
+@models_group.command("repair")
+@click.argument("model")
+@click.option("--yes", is_flag=True, help="Acknowledge licenses/size and download what is missing")
+def models_repair(model, yes):
+    """Re-hash every file and download only the missing or corrupt ones."""
+    try:
+        click.echo(install_model(model, yes=yes, progress=_cli_progress()))
+    except (KeyError, RuntimeError) as e:
+        raise click.ClickException(str(e)) from e
+
+
 @models_group.command("reinstall")
 @click.argument("model", required=False)
 @click.option("--all", "all_models", is_flag=True, help="Redownload every core model")
@@ -785,18 +904,27 @@ def models_verify(model, all_models, load, as_json):
 @click.option("--keep-rollback", is_flag=True, help="Keep the previous files under models/.rollback/")
 @click.option("--no-load-check", is_flag=True, help="Skip the GPU load + sample inference gate")
 def models_reinstall(model, all_models, yes, keep_rollback, no_load_check):
-    """Force a fresh, staged download; old files stay in place until the new ones pass."""
+    """Force a fresh download; old files stay in place until the new ones pass."""
+    from .experimental_models import manifests
     from .model_store import ModelStoreError, install
 
     names = _core_and_installed(all_models, model)
+    known = {m.name: m.meta for m in list_models()}
     if not yes:
         for n in names:
-            m = CATALOG.get(n, {})
+            m = known.get(n, {})
             click.echo(f"{n}: {m.get('size_hint')}\n  weights: {m.get('weights_license')}\n  source: {m.get('source')}")
         raise click.ClickException("re-run with --yes to redownload")
     failed = []
     for n in names:
         click.echo(f"== {n}")
+        if n in manifests():  # experimental bundles: file-by-file replacement, each verified before it lands
+            try:
+                click.echo(install_model(n, yes=True, force=True, progress=_cli_progress()))
+            except RuntimeError as e:
+                failed.append(n)
+                click.echo(f"{n}: FAILED: {e}", err=True)
+            continue
         try:
             rec = install(n, force=True, progress=_cli_progress(), load_check=not no_load_check,
                           keep_rollback=keep_rollback, log=click.echo)
@@ -855,6 +983,35 @@ def experimental_configure(backend, checkout, python_path):
     click.echo(f"Configured {backend}; run experimental doctor and models verify {backend} before rendering.")
 
 
+@experimental_group.command("enable")
+@click.option("--backend", required=True, type=click.Choice(["liveportrait", "personalive", "editalive"]))
+@click.option("--memory-limit-gb", type=float, default=None,
+              help="Host RAM ceiling for the isolated worker (default: total RAM minus a desktop reserve).")
+def experimental_enable(backend, memory_limit_gb):
+    """Re-enable a disabled backend. Isolated workers always run under the host memory guard."""
+    from .engines.experimental.adapters import backend_status, set_backend_enabled
+
+    try:
+        set_backend_enabled(backend, True, memory_limit_gb=memory_limit_gb)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+    status = backend_status(backend)
+    plan = status.get("memory")
+    click.echo(f"{backend}: enabled; {status['status']}"
+               + (f"\nmemory guard: {plan['limit_gb']} GiB ceiling of {plan['total_gb']} GiB host RAM ({plan['method']})" if plan else ""))
+
+
+@experimental_group.command("disable")
+@click.option("--backend", required=True, type=click.Choice(["liveportrait", "personalive", "editalive"]))
+@click.option("--reason", default="", help="Shown in the control center and in doctor output.")
+def experimental_disable(backend, reason):
+    """Disable a backend until it is enabled again."""
+    from .engines.experimental.adapters import set_backend_enabled
+
+    set_backend_enabled(backend, False, reason=reason)
+    click.echo(f"{backend}: disabled")
+
+
 @main.command("app")
 def app_cmd():
     """Open the Quickshell control center without activating a camera."""
@@ -905,6 +1062,7 @@ def _run_experimental_video(path, reference, cfg, kwargs):
             fps = cap.get(cv2.CAP_PROP_FPS) or 25
             size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
             kwargs["audio_from"] = path
+            session.bus.update(state="processing", loading_stage="Exporting")
             sink = _make_sink(kwargs, cfg, fps=fps, size=size)
             frames = 0
             start = time.monotonic()
@@ -919,7 +1077,7 @@ def _run_experimental_video(path, reference, cfg, kwargs):
             summary.update(output_frames=frames, output_timeline_fps=fps, export_wall_s=time.monotonic() - start,
                            streaming=False, framegen=False)
             summary.setdefault("native_inference_fps", None)
-            session.bus.update(progress_pct=100, frames=frames)
+            session.bus.update(progress_pct=100, frames=frames, loading_stage="Finished", worker_summary=summary)
             click.echo(json.dumps(summary, indent=2))
     except (RuntimeError, InterruptedError) as e:
         session.bus.update(error=str(e), state="error")
@@ -964,38 +1122,47 @@ def desktop_install(executable):
 
 
 @desktop_group.command("model-job", hidden=True)
-@click.argument("action", type=click.Choice(["install_model", "verify_model", "remove_model", "reinstall_model"]))
+@click.argument("action", type=click.Choice(["install_model", "repair_model", "verify_model", "remove_model", "reinstall_model"]))
 @click.argument("model")
 def desktop_model_job(action, model):
-    from .experimental_models import install, manifests
     from .ipc import state_dir, write_json_atomic
     from .models import remove_model, verify_model
 
     path = state_dir() / "model-job.json"
-    status = {"state": "running", "action": action, "model": model, "pid": os.getpid()}
+    status = {"state": "running", "action": action, "model": model, "pid": os.getpid(), "started_at": time.time()}
     write_json_atomic(path, status)
+    last = [0.0]
 
     def progress(filename, done, total):
         status.update(file=filename, bytes=done, total_bytes=total)
+        now = time.monotonic()
+        if now - last[0] >= 0.25 or (total and done >= total):  # a state file per MiB would only wear the disk
+            last[0] = now
+            write_json_atomic(path, status)
+
+    def stage(text):
+        status.update(stage=text)
         write_json_atomic(path, status)
 
     try:
-        if action == "install_model":
-            result = install(model, yes=True, progress=progress) if model in manifests() else install_model(model, yes=True, progress=progress)
-        elif action == "reinstall_model":
-            result = install_model(model, yes=True, force=True, progress=progress)
+        if action in {"install_model", "repair_model", "reinstall_model"}:
+            stage({"install_model": "Downloading", "repair_model": "Checking files", "reinstall_model": "Redownloading"}[action])
+            result = install_model(model, yes=True, force=action == "reinstall_model", progress=progress, stage=stage)
         elif action == "verify_model":
-            status.update(file="re-hashing and loading on the GPU")
-            write_json_atomic(path, status)
-            result = verify_model(model, load=model in CATALOG)
+            stage("Re-hashing every file" + (" and loading on the GPU" if model in CATALOG else ""))
+            # core models report (file, index, count); experimental bundles report bytes
+            core_progress = lambda f, i, n: (status.update(file=f"{f} ({i + 1}/{n})"), write_json_atomic(path, status))  # noqa: E731
+            result = verify_model(model, progress=core_progress if model in CATALOG else progress, load=model in CATALOG)
             if not result["ok"]:
                 bad = [f["path"] + ": " + str(f.get("reason")) for f in result.get("files", []) if not f.get("ok")]
-                raise RuntimeError("; ".join(bad) or (result.get("load_check") or {}).get("error") or "verification failed")
+                bad += [f"{f}: {kind}" for kind in ("missing", "corrupt") for f in result.get(kind) or []]
+                raise RuntimeError("; ".join(bad[:6]) + (f" (+{len(bad) - 6} more)" if len(bad) > 6 else "")
+                                   or (result.get("load_check") or {}).get("error") or "verification failed")
         else:
             result = remove_model(model, yes=True)
-        status.update(state="complete", result=result)
-    except Exception as e:
-        status.update(state="error", error=str(e))
+        status.update(state="complete", result=result, finished_at=time.time())
+    except Exception as e:  # noqa: BLE001 - every failure must reach the control center
+        status.update(state="error", error=str(e), finished_at=time.time())
     write_json_atomic(path, status)
 
 

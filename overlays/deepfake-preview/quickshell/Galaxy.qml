@@ -32,7 +32,11 @@ Singleton {
     readonly property color warnBg: "#3a2d12"
     readonly property color err: "#ff7a9a"
     readonly property color errBg: "#3a1424"
-    // panel gradient (glass): top, middle, bottom
+    // window + card fills (solid; see Nebula.qml for the painted backdrop)
+    readonly property color window: "#0e0a1c"
+    readonly property color card: "#d9130e28"
+    readonly property color rimLight: "#6a52b0"
+    // legacy glass gradient stops (no longer used by GalaxyPanel)
     readonly property color glassTop: "#fa1a1630"
     readonly property color glassMid: "#fa0f0d1a"
     readonly property color glassBottom: "#fc07060d"

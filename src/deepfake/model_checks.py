@@ -201,7 +201,34 @@ def check_yunet() -> dict[str, Any]:
             "detect_ms": round(ms, 2), "input": f"{img.shape[1]}x{img.shape[0]}"}
 
 
-CHECKS = {"rife": check_rife, "inswapper": check_inswapper, "alphaface": check_alphaface, "yunet": check_yunet}
+def check_pphumanseg() -> dict[str, Any]:
+    """Segment the bundled fictional portrait: the face is foreground, the matte is mirror-consistent."""
+    from importlib.resources import files
+
+    import cv2
+
+    from .matting import PersonSegmenter
+
+    data = np.frombuffer((files("deepfake") / "assets" / "bench_face.jpg").read_bytes(), dtype=np.uint8)
+    img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    seg = PersonSegmenter()
+    seg.alpha(img)  # warm-up
+    t0 = time.perf_counter()
+    alpha = seg.alpha(img)
+    ms = (time.perf_counter() - t0) * 1000
+    mirrored = seg.alpha(np.ascontiguousarray(img[:, ::-1]))[:, ::-1]
+    n = alpha.shape[0]
+    face = float(alpha[n // 4: n // 2, 3 * n // 8: 5 * n // 8].mean())
+    corner = float(alpha[: n // 8, : n // 8].mean())
+    # A graph engine that mis-registers the network gives a plausible but shifted matte; mirroring exposes it.
+    asymmetry = float(np.abs(alpha - mirrored).mean())
+    return {"ok": face > 0.9 and corner < 0.2 and asymmetry < 0.05, "face_alpha": round(face, 3),
+            "corner_alpha": round(corner, 3), "mirror_error": round(asymmetry, 4), "segment_ms": round(ms, 2),
+            "device": "cpu (cv2.dnn)"}
+
+
+CHECKS = {"rife": check_rife, "inswapper": check_inswapper, "alphaface": check_alphaface, "yunet": check_yunet,
+          "pphumanseg": check_pphumanseg}
 
 
 def run_check(name: str) -> dict[str, Any]:

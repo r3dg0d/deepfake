@@ -20,12 +20,14 @@ deepfake video -i input.mp4 -o head.mp4 --engine experimental --mode head --refe
 ```
 
 LivePortrait runs in the host Python environment. It animates a reference head
-crop with relative motion and expressions, then blends that complete crop onto
-the driving scene. It is experimental: hair/background inside the rectangular
-crop can overwrite nearby content. No segmentation, neck reconstruction, eye
-gaze guarantee, lighting match or occlusion guarantee is provided. Keep one
-frontal, well-lit subject visible. Multiple faces or large tracking jumps stop
-processing rather than silently selecting a different subject.
+crop with relative motion and expressions and composites it onto the driving scene.
+With the matte model installed (`deepfake models install pphumanseg --yes`) the head
+is rotoscoped into the frame and the background can be replaced; see
+[rotoscoping](rotoscoping.md). Without it the complete crop is blended as a soft
+rectangle, so hair and background inside the crop overwrite nearby content. No neck
+reconstruction, eye gaze guarantee, lighting match or hand-occlusion handling is
+provided. Keep one frontal, well-lit subject visible. Multiple faces or large
+tracking jumps stop processing rather than silently selecting a different subject.
 
 The existing RIFE stage is available independently; use `--frame-gen off` to
 evaluate native inference. More output FPS does not mean faster neural inference.
@@ -52,9 +54,25 @@ the timeline; complete source-rate preservation is guaranteed only by the
 shared per-frame engines, not the research body worker. Inspect worker output
 and audio synchronization before using a render.
 
-PersonaLive's offline adapter is blocked by an unavailable required official
-base checkpoint; installation gives that reason. PixReenact, DirectSwap and
-hybrid mode are not registered as working backends. No remote processing exists.
+PersonaLive (portrait, offline) installs with `deepfake models install personalive --yes`
+(14.47 GiB) and needs its own Python 3.10 environment with upstream's
+`requirements_base.txt`, configured like EditaLive above. Its worker has not been run here.
+
+Isolated workers run under a host memory guard. The ceiling defaults to total RAM
+minus a desktop reserve (15 %, at least 6 GiB); the worker is stopped above it or when
+the host runs low. Where the systemd user manager can create a scope, `MemoryMax` with
+swap disabled enforces the same ceiling in the kernel.
+
+```bash
+deepfake experimental doctor                                   # status, paths, memory ceiling
+deepfake experimental enable --backend editalive               # clear a disabled flag
+deepfake experimental enable --backend editalive --memory-limit-gb 40
+deepfake experimental disable --backend editalive --reason "not enough RAM"
+```
+
+A stopped worker ends the render with a message; raise the ceiling only if the machine
+really has the memory. PixReenact, DirectSwap and hybrid mode are not registered as
+working backends. No remote processing exists.
 
 GUI: `deepfake app` opens Quickshell. Select/import a character, choose an engine,
 save settings and press Start. Recording can start a new camera session or render

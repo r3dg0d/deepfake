@@ -4,29 +4,33 @@ Linux **real-time face-swap CLI** wrapping [AlphaFace](https://github.com/andrew
 
 Upstream AlphaFace is a **still/batch** research demo. This project adds a real application shell: webcam/video capture, face detect → swap → composite, presets, metrics, and OBS-friendly outputs (preview, file, FFmpeg pipe, optional GStreamer, v4l2loopback virtual cam).
 
-## v0.4 development snapshot
+## v0.5 development version
 
-AlphaFace remains the default. The experimental engine adds **genuine LivePortrait
-neural head animation**, reusing capture, RIFE, recording, virtual-camera sinks,
-consent and disclosure. A full **Quickshell control center** provides previews,
-engine/reference selection, private character storage, model operations, recording,
-offline rendering, performance history and persistent themes/preferences.
+AlphaFace remains the default. The experimental engine adds **LivePortrait neural head
+animation with real-time rotoscoping and background replacement**, and isolated offline
+workers for PersonaLive (portrait) and EditaLive (full body). The **Quickshell control
+center** was rebuilt around a Studio view with a readiness checklist, a model manager and a
+render page.
 
 ```bash
-deepfake app
-deepfake models list --experimental
+deepfake app                                   # control center, no camera opens
 deepfake models install liveportrait --yes
+deepfake models install pphumanseg --yes       # 6 MB matte model for rotoscoping
 # Configure the pinned source and host optional dependencies first; see the guide.
-deepfake webcam --engine experimental --mode head --reference avatar.png --frame-gen off
+deepfake webcam --engine experimental --mode head --reference avatar.png
+deepfake webcam --engine experimental --mode head --reference avatar.png --background blur
+deepfake virtualcam --engine experimental --mode head --reference avatar.png --background green
 deepfake video -i input.mp4 -o head.mp4 --engine experimental --mode head --reference avatar.png
+deepfake models install personalive --yes      # 14.5 GiB, installable again in 0.5
 ```
 
-This is **0.4.0.dev0**, not a completed release. EditaLive has an isolated offline
-adapter; its genuine full-body validation and remaining release gaps are tracked
-in [STATUS.md](STATUS.md). PersonaLive installation is blocked by a missing
-required official base checkpoint. Hybrid, DirectSwap and PixReenact are not
-advertised as working engines.
+This is **0.5.0.dev0**, not a completed release: the 0.5 work is tested on the CPU only and
+has not run on a GPU, with a camera or under a real Quickshell (see the
+[changelog](CHANGELOG.md)). PersonaLive and EditaLive render video files only, in their own
+Python environments, under a host memory guard; neither has produced validated output here.
+Hybrid, DirectSwap and PixReenact are not advertised as working engines.
 
+- [Rotoscoping and background replacement](docs/rotoscoping.md)
 - [Experimental setup and exact examples](docs/experimental-mode.md)
 - [Desktop controls and launcher](docs/quickshell-app.md)
 - [Model manifests, licenses and environments](docs/experimental-models.md)
@@ -213,7 +217,7 @@ Our wrapper code is **MIT**. We do **not** relicense AlphaFace. See [NOTICE](NOT
 6. Disclosure watermark on every presented frame  
 7. Output to window / file / ffmpeg / gstreamer / v4l2loopback  
 
-See [STATUS.md](STATUS.md) for what works on a CUDA-less box vs with weights.
+See the [changelog](CHANGELOG.md) for what has and has not been validated.
 
 ## Citation
 

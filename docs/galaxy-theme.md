@@ -19,6 +19,11 @@ copies identical**; change both together.
 | `GalaxyNav.qml` | sidebar entry with a glowing rail |
 | `Starfield.qml` | static nebula + stars (+ optional window base gradient), painted once per resize |
 
+The deepfake control center adds app-specific components on the same tokens. They are not part of the
+shared set and need no counterpart in aivoice: `Card`, `Segmented`, `ChoiceRow`, `CheckRow`,
+`KeyValue`, `PathField`, `LogView`, `PreviewPane`, `TextLabel`, `TextHint`, and one `<Name>Page.qml`
+per page. The window backdrop is the shared `Nebula.qml`; `GalaxyPanel` is a solid translucent card on it.
+
 ## Tokens
 
 | token | value | use |
@@ -43,4 +48,5 @@ copies identical**; change both together.
   for actions the backend implements.
 - Screenshots for review: both shells take `*_UI_SCREENSHOT=/path.png` (+ `*_UI_SCREENSHOT_QUIT=1`)
   and render offscreen with `QT_QPA_PLATFORM=offscreen`; the test suites do this for every page
-  and fail on any QML warning.
+  and fail on any QML warning. Without Quickshell, `python tests/quickshell_shim/run.py <shell dir>`
+  renders the deepfake shell with plain Qt (PySide6) and stand-ins for the Quickshell types.

@@ -249,6 +249,9 @@ class DeepfakeSession:
             "dropped_source_frames": snap.get("dropped_source_frames"),
             "queue_depth": snap.get("queue_depth"),
             "latency_p95_ms": snap.get("latency_p95_ms"),
+            "rotoscope": snap.get("rotoscope"),
+            "matte_ms": snap.get("matte_ms"),
+            "background": snap.get("background"),
             "uptime_s": round(time.monotonic() - self._t0, 1),
             "frames": (snap.get("keyframes") or 0) + (gen or 0) if gen is not None else snap.get("frames"),
         }

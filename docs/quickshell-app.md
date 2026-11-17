@@ -1,51 +1,68 @@
 # Quickshell control center
 
-Run `deepfake app`, or use the existing **Deepfake** app-launcher entry after:
+Run `deepfake app`, or use the **Deepfake** app-launcher entry after:
 
 ```bash
 deepfake desktop install --executable "$(command -v deepfake)"
 ```
 
-The installer keeps the `galaxy-deepfake.desktop` identity, makes a backup under
-the private state directory and updates the existing Quickshell config.
-Nix packages ship QML, the same desktop entry and its icon. No terminal or second
-frontend is opened. Quickshell must be installed separately (`qs` on PATH).
+The installer keeps the `galaxy-deepfake.desktop` identity, makes a backup under the private state
+directory and copies every QML file of the shell to `~/.config/quickshell/deepfake`. Run it again
+after upgrading: 0.5 added files. Quickshell must be installed separately (`qs` on PATH). Opening
+the window never opens a camera.
 
-1. In Settings, acknowledge the existing consent/disclosure notice if needed.
-2. In Characters, browse/import a local reference, enter a name and provenance,
-   then select Use. Only supported image files are accepted; video references
-   and separate head/body reference assignments are not implemented.
-3. In Engines, choose AlphaFace or an installed/configured experimental backend.
-   Unsupported live combinations disable Start; offline adapters are labeled.
-4. In Camera, choose an index/device, size, FPS and optional virtual output path.
-   Save preferences, then Start. The camera is never activated on application open.
-5. Dashboard shows real processed/original preview images, side-by-side mode,
-   mirroring, expanded preview and measured rates. Preview is capped at 20 Hz.
-6. Models shows sizes, terms, download confirmation, progress/cancellation,
-   verification and removal through the same Python model manager.
-7. Recording selects a new file and encoder (auto, CPU H.264 or NVENC), then
-   starts a recording session. Stop finalizes it. Use an input video to render
-   offline with the selected engine. Live microphone audio is not captured;
-   video input audio is muxed where supported by the existing sink.
-8. Start virtual camera routes through existing v4l2loopback; select it in OBS
-   or a browser. Stop a session before changing engines or outputs.
+## Pages
 
-Performance shows camera/native/output FPS, median/P95 capture-to-sink latency
-when available, GPU/VRAM, queue and drop/generated counters plus a native-FPS
-history graph. Missing measurements show `—`; no mock metrics exist.
+**Studio** (Ctrl+1). The preview on the left; on the right, everything that shapes the next session:
 
-Dark, light and Matrix themes are available. Ctrl+S saves session defaults;
-F11 expands preview; Esc returns; Ctrl+Q requests stop and closes the window.
-Closing the application requests graceful stop/finalization. A session stopping
-does not destroy the app. Use Backend log for startup/CUDA/device errors.
+- *Engine*: Face swap (AlphaFace, live), Head (LivePortrait, live, rotoscoped), Portrait (PersonaLive,
+  renders files), Full body (EditaLive, renders files). Each row shows whether that engine is ready
+  and, if not, why.
+- *Character*: the selected reference; Change opens Characters.
+- *Matte* (Head engine): rotoscope Auto / On / Off, background Keep / Blur / colours / custom colour /
+  image, and whether your body below the chin is kept. See [rotoscoping](rotoscoping.md).
+- *Quality*: preset and frame generation. *Output*: Start, or Start with the virtual camera.
+- *Before you start*: what is still missing (consent, character, weights, worker setup, a disabled
+  backend, the matte model), each with the button that fixes it. Start stays disabled until the
+  blocking items are done, and its tooltip names the first one.
 
-Protocol v1 uses validated JSON requests passed as argv, atomic private state
-files, scoped stop commands and a process lock. Preview pixels never pass
-through JSON. Existing CLI/TOML/legacy IPC remain supported. Preferences specific
-to the GUI live in `desktop.json`; the original configuration is preserved.
+**Characters** (Ctrl+2). Import a reference image with a name and its provenance; pick the one in use.
+Images stay in the private local library.
 
-Current limits: no before/after slider, interactive diagnostics overlays,
-microphone capture, mid-session output toggling, CPU usage sample, startup-at-login
-setting or automatic experimental environment provisioning. Real-device camera,
-OBS and browser UX needs further testing; synthetic pipeline and Wayland window
-loading are tested separately.
+**Models** (Ctrl+3). Core models and experimental engines. Install (or Resume a partial download),
+Verify, Repair (re-check everything, download only what is missing or damaged), Reinstall (download
+everything again; installed files stay until their replacements pass) and Remove. One operation runs
+at a time, with overall progress and Cancel; partial downloads are kept. Experimental engines also
+have a setup block: the source checkout at the pinned revision and, for PersonaLive and EditaLive,
+the Python of their isolated environment. A backend that was disabled shows the reason and
+**Enable with memory guard…**.
+
+**Render** (Ctrl+4). Input video, a new output file, encoder, and for EditaLive an appearance prompt.
+*Render* uses the engine selected in the Studio. While an isolated worker runs, the page shows its
+stage (the worker's own last output line, not an invented percentage), its host RAM against the
+ceiling, and its log. A failed render leaves its error on the page. *Record the webcam* starts a
+live session that also writes the output file.
+
+**Performance** (Ctrl+5). Camera, native inference and output rates, latency p50/p95, matte time,
+frame-generation cost, GPU load and 60-second graphs. Anything the backend did not report shows `—`.
+
+**Settings** (Ctrl+6). Consent notice, capture device and size, virtual camera device, shortcuts,
+version and the backend log.
+
+Settings are saved as you edit them. F11 shows the preview fullscreen, Esc leaves it, Ctrl+Q stops
+the session and closes the window. Closing with × only hides the window; a session keeps running.
+
+## Protocol
+
+Protocol v1 uses validated JSON requests passed as argv, atomic private state files, session-scoped
+stop commands and a process lock. Preview pixels never pass through JSON. Actions added in 0.5:
+`configure_backend`, `enable_backend`, `disable_backend`, `repair_model`, and `reinstall_model` for
+experimental models; `log` takes `which` = `backend`, `worker` or `model`. GUI preferences live in
+`desktop.json`; keys from another version are ignored.
+
+## Limits
+
+No before/after slider, microphone capture, mid-session change of engine, matte or output, startup
+at login, or automatic creation of the worker environments. The 0.5 interface was rendered and
+checked page by page with plain Qt and stand-in Quickshell types; it has not yet been run under
+`qs` on a desktop, with a camera, OBS or a browser.
