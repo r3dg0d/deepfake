@@ -40,6 +40,19 @@ CATALOG: dict[str, dict[str, Any]] = {
         "notes": "Default face detector (cv2.FaceDetectorYN): boxes + 5 landmarks, works on OpenCV 4.x and 5.x. "
                  "OpenCV 5 removed the Haar cascades the old detector used.",
     },
+    "face-landmarker": {
+        "name": "face-landmarker",
+        "backend": "landmarker",
+        "source": "MediaPipe Face Landmarker float16 v1 (Google, storage.googleapis.com/mediapipe-models)",
+        "paper": "MediaPipe Face Mesh / Attention Mesh (Kartynnik et al. 2019; Grishchenko et al. 2020)",
+        "code_license": "Apache-2.0 (mediapipe)",
+        "weights_license": "Apache-2.0",
+        "size_hint": "3.6 MB",
+        "checksum": "SHA-256 (pinned)",
+        "install": "staged https + sha256",
+        "notes": "Optional landmark source for face alignment (needs `pip install mediapipe`). Measured on the "
+                 "bundled fixture: roll error 0.26 deg mean / 0.8 max vs 1.7 / 7.8 for refined YuNet points.",
+    },
     "alphaface": {
         "name": "alphaface",
         "backend": "alphaface",
@@ -145,7 +158,20 @@ def list_models() -> list[ModelInfo]:
         path = models_dir() / name
         present = bool(meta["files"]) and not meta.get("blocked") and all(
             (path / f["path"]).is_file() and (path / f["path"]).stat().st_size == f["size"] for f in meta["files"])
+        rec = installed.get(name, {})
+        verified = present and rec.get("integrity") == "verified" and rec.get("manifest_revision") == meta["revision"]
+        for spec in meta["files"]:
+            recorded = rec.get("files", {}).get(spec["path"], {})
+            file_path = path / spec["path"]
+            if not file_path.is_file():
+                verified = False
+                break
+            stat = file_path.stat()
+            if recorded != {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "sha256": spec["sha256"]}:
+                verified = False
+                break
         out.append(ModelInfo(name=name, installed=present, meta={**meta, "experimental": True,
+                            "integrity": "verified" if verified else "unverified",
                             "size_hint": f"{sum(f['size'] for f in meta['files']) / 2**30:.2f} GiB"},
                              path=path if path.exists() else None))
     return out

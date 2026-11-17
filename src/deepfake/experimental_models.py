@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import time
 import urllib.error
 import urllib.request
 from importlib.resources import files
@@ -99,11 +100,12 @@ def install(name, *, yes=False, progress=None):
 
 
 def verify(name, progress=None):
-    from .models import file_sha256
+    from .models import _mark_installed, file_sha256
 
     manifest = manifests()[name]
     validate_manifest(manifest)
     missing, corrupt = [], []
+    checked = {}
     total = sum(f["size"] for f in manifest["files"])
     done = 0
     for spec in manifest["files"]:
@@ -114,6 +116,16 @@ def verify(name, progress=None):
             missing.append(spec["path"])
         elif path.stat().st_size != spec["size"] or file_sha256(path) != spec["sha256"]:
             corrupt.append(spec["path"])
+        else:
+            stat = path.stat()
+            checked[spec["path"]] = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+                                     "sha256": spec["sha256"]}
         done += spec["size"]
-    return {"name": name, "ok": not missing and not corrupt and not manifest.get("blocked"),
+    ok = bool(manifest["files"]) and not missing and not corrupt and not manifest.get("blocked")
+    _mark_installed(name, {"manifest_revision": manifest["revision"], "files": checked,
+                           "integrity": "verified" if ok else "failed",
+                           "verified_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+    if progress:
+        progress("Verification complete" if ok else "Verification failed", done, total)
+    return {"name": name, "ok": bool(ok),
             "missing": missing, "corrupt": corrupt, "blocked": manifest.get("blocked")}

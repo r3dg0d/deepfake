@@ -1,6 +1,6 @@
 """LivePortrait head reenactment through official neural model classes.
 
-Single-subject, Haar-aligned experimental integration. Hair inside the head crop
+Single-subject, detector-aligned experimental integration. Hair inside the head crop
 is generated; hand occlusions and background reconstruction are not segmented.
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ...detect import OpenCVHaarDetector, align_crop
+from ...detect import align_crop, create_detector
 from ...ipc import read_json
 from ...metrics import MetricsTracker
 from ...paths import models_dir
@@ -69,7 +69,7 @@ class LivePortraitEngine(TransformationEngine):
             self.torch = torch
         except ImportError as e:
             raise EngineUnavailable(f"LivePortrait dependency unavailable ({e}). Install the experimental-head extra.") from e
-        self.detector = OpenCVHaarDetector()
+        self.detector = create_detector(landmarker="yunet")
         self.metrics = MetricsTracker()
         self.first_driver = None
         self.last_box = None

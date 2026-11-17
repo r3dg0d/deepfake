@@ -140,7 +140,7 @@ ShellRoot {
             anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 12; spacing: 6
             Rectangle { implicitWidth: tagT.implicitWidth + 14; implicitHeight: 20; radius: 10; color: "#cc07060d"; border.color: Galaxy.edge
                 Text { id: tagT; anchors.centerIn: parent; font.family: Galaxy.font; font.pixelSize: 9; font.letterSpacing: 1.2; color: pv.kind === "original" ? Galaxy.muted : Galaxy.lavender
-                    text: pv.kind === "original" ? "ORIGINAL" : "PROCESSED · SYNTHETIC MEDIA" } }
+                    text: pv.kind === "original" ? "ORIGINAL" : "PROCESSED" } }
         }
         Row {
             anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 12; spacing: 6
@@ -201,8 +201,7 @@ ShellRoot {
             anchors.fill: parent
             radius: root.expanded ? 0 : Galaxy.radiusWindow
             color: "transparent"
-            Starfield { anchors.fill: parent; cornerRadius: frame.radius; seed: 11; paintBase: true }
-            Rectangle { anchors.fill: parent; radius: frame.radius; color: "transparent"; border.width: root.expanded ? 0 : 1; border.color: Galaxy.edge }
+            Nebula { anchors.fill: parent; radius: frame.radius; seed: 11; rim: !root.expanded; hot: root.active }
 
             RowLayout {
                 anchors.fill: parent; anchors.margins: root.expanded ? 0 : 14; spacing: 14
@@ -229,7 +228,7 @@ ShellRoot {
                         GalaxyPill { visible: !root.narrow; Layout.alignment: Qt.AlignHCenter
                             state_: !root.connected ? "err" : root.active ? "ok" : root.running ? "busy" : "idle"
                             text: !root.connected ? "BACKEND OFFLINE" : root.active ? String(root.session.state || "live").toUpperCase() : root.running ? "MODEL JOB" : "CAMERA OFF" }
-                        Text { visible: !root.narrow; Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; text: "disclosed synthetic media"; font.family: Galaxy.font; font.pixelSize: 9; color: Galaxy.dim; Layout.bottomMargin: 6 }
+                        Text { visible: !root.narrow; Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; text: "on-device · nothing leaves this PC"; font.family: Galaxy.font; font.pixelSize: 9; color: Galaxy.dim; Layout.bottomMargin: 6 }
                     }
                 }
 
@@ -292,6 +291,7 @@ ShellRoot {
                                             KV { k: "frame gen"; v: root.active ? (root.session.framegen_enabled ? "RIFE " + (root.session.framegen_variant || "") + " · " + root.session.framegen_multiplier + "× · " + root.num(root.session.framegen_ms_per_frame) + " ms/frame" : "off" + (root.session.framegen_warning ? " · " + root.session.framegen_warning : "")) : String(root.form.frame_gen || "—") }
                                             KV { k: "source"; v: root.active ? String(root.session.input_device || "camera " + (root.form.camera || "0")) : "camera " + String(root.form.camera || "0") }
                                             KV { k: "preset"; v: String(root.form.preset || "—") }
+                                            KV { k: "geometry"; v: root.active && root.session.geometry ? String(root.session.geometry.alignment) + " · " + String(root.session.geometry.landmarker) + " · mask " + String(root.session.geometry.mask_mode) + " · " + String(root.session.geometry.fit) : String(root.form.alignment || "landmark") + " · " + String(root.form.landmarker || "auto") + " (next start)" }
                                         }
                                     }
                                     GalaxyPanel { Layout.fillWidth: true; implicitHeight: gpuCol.implicitHeight + 28
@@ -354,6 +354,16 @@ ShellRoot {
                                         GalaxyCombo { model: ["auto", "off", "2x", "3x", "4x"]; enabled: !root.active; currentIndex: Math.max(0, model.indexOf(root.form.frame_gen)); onActivated: root.edit("frame_gen", currentText) }
                                         GalaxyButton { text: "Save"; primary: true; enabled: !root.active; onClicked: root.save() }
                                     }
+                                    GalaxySection { title: "Face geometry" }
+                                    GridLayout { Layout.fillWidth: true; columns: root.narrow ? 1 : 4; columnSpacing: 10; rowSpacing: 6
+                                        Hint { text: "Alignment" } Hint { text: "Landmarks" } Hint { text: "Composite mask" } Hint { text: "Camera frame fit" }
+                                        GalaxyCombo { model: ["landmark", "bbox"]; enabled: !root.active; currentIndex: Math.max(0, model.indexOf(root.form.alignment || "landmark")); onActivated: root.edit("alignment", currentText) }
+                                        GalaxyCombo { model: ["auto", "mediapipe", "yunet"]; enabled: !root.active && (root.form.alignment || "landmark") === "landmark"; currentIndex: Math.max(0, model.indexOf(root.form.landmarker || "auto")); onActivated: root.edit("landmarker", currentText) }
+                                        GalaxyCombo { model: ["landmark", "oval"]; enabled: !root.active; currentIndex: Math.max(0, model.indexOf(root.form.mask_mode || "landmark")); onActivated: root.edit("mask_mode", currentText) }
+                                        GalaxyCombo { model: ["cover", "contain", "stretch"]; enabled: !root.active; currentIndex: Math.max(0, model.indexOf(root.form.fit || "cover")); onActivated: root.edit("fit", currentText) }
+                                    }
+                                    GalaxyToggle { text: "Smooth landmarks (One Euro filter)"; enabled: !root.active; checked: root.form.landmark_smooth !== false; onToggled: root.edit("landmark_smooth", checked) }
+                                    Hint { text: "landmark = roll-corrected crop and a mask fitted to the face. bbox + oval + stretch reproduce the old output for comparison. Compare on your own clip: deepfake compare -i clip.mp4 -f face.png" }
                                     Hint { text: root.active ? "Engine and quality changes apply on the next start (stop the session first)." : "auto enables interpolation only when the camera rate is below the target and the RIFE weights verified." }
                                     Repeater { model: root.data.engines || []
                                         KV { required property var modelData; k: modelData.name; v: (modelData.status || "available") + (modelData.validation ? " · " + modelData.validation : ""); tint: modelData.available ? Galaxy.ok : Galaxy.muted } }
@@ -410,7 +420,7 @@ ShellRoot {
                                             RowLayout { Layout.fillWidth: true; spacing: 8
                                                 Text { text: modelCard.modelData.name; font.family: Galaxy.font; font.pixelSize: 14; color: Galaxy.ink }
                                                 GalaxyPill { state_: !modelCard.modelData.installed ? "idle" : modelCard.integ === "verified" ? (modelCard.modelData.load_check_ok === false ? "err" : "ok") : "warn"
-                                                    text: !modelCard.modelData.installed ? "AVAILABLE" : modelCard.integ === "verified" ? (modelCard.modelData.load_check_ok === true ? "VERIFIED · GPU LOAD OK" : modelCard.modelData.load_check_ok === false ? "LOAD CHECK FAILED" : "VERIFIED") : "UNVERIFIED" }
+                                                    text: modelCard.modelData.blocked ? "UNAVAILABLE" : !modelCard.modelData.installed ? "AVAILABLE" : modelCard.integ === "verified" ? (modelCard.modelData.load_check_ok === true ? "VERIFIED · GPU LOAD OK" : modelCard.modelData.load_check_ok === false ? "LOAD CHECK FAILED" : "VERIFIED") : "UNVERIFIED" }
                                                 Text { visible: !!modelCard.modelData.experimental; text: "experimental"; font.family: Galaxy.font; font.pixelSize: 10; color: Galaxy.label }
                                                 Item { Layout.fillWidth: true }
                                                 Text { text: modelCard.modelData.size_hint || ""; font.family: Galaxy.mono; font.pixelSize: 10; color: Galaxy.muted }
@@ -439,7 +449,7 @@ ShellRoot {
                                     Label { text: "Output file" }
                                     RowLayout { Layout.fillWidth: true; spacing: 10; GalaxyField { id: outputPath; text: root.form.recording_path || ""; placeholderText: "/path/to/new-recording.mp4"; onEditingFinished: root.edit("recording_path", text) } GalaxyButton { text: "Browse…"; onClicked: outputPicker.open() } }
                                     GalaxyCombo { Layout.preferredWidth: 220; Layout.fillWidth: false; model: ["auto", "libx264", "h264_nvenc"]; currentIndex: Math.max(0, model.indexOf(root.form.encoder)); onActivated: root.edit("encoder", currentText) }
-                                    Hint { text: "Recording starts a new webcam session; Stop finalises the file. Live audio is not captured. Existing files are never overwritten. The disclosure stays on every recording." }
+                                    Hint { text: "Recording starts a new webcam session; Stop finalises the file. Live audio is not captured. Existing files are never overwritten." }
                                     RowLayout { spacing: 10
                                         GalaxyButton { text: "● Start recording"; primary: true; enabled: !root.active && root.canStartLive && !!root.form.recording_path && !!root.data.consent; onClicked: root.start(false, true) }
                                         GalaxyButton { text: "Stop and save"; enabled: root.active; onClicked: root.call("stop") }
@@ -475,12 +485,12 @@ ShellRoot {
                             GalaxyPanel {
                                 visible: root.page === "Settings" && !root.expanded; Layout.fillWidth: true; implicitHeight: setCol.implicitHeight + 32
                                 ColumnLayout { id: setCol; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 16; spacing: 10
-                                    GalaxySection { title: "Consent & disclosure" }
+                                    GalaxySection { title: "Consent & output" }
                                     Label { text: root.data.consent_text || "Loading notice…"; color: Galaxy.muted }
                                     GalaxyButton { text: root.data.consent ? "Consent notice acknowledged" : "I own or have permission to use my references and footage"; primary: !root.data.consent; enabled: !root.data.consent; onClicked: root.call("consent", {accepted: true}) }
                                     GalaxySection { title: "Shortcuts"; Layout.topMargin: 10 }
                                     Hint { text: "Ctrl+S saves defaults · F11 expands the preview · Esc leaves it · Ctrl+Q stops the session and closes the window. Closing with × only hides it." }
-                                    Hint { text: "The disclosure watermark stays enabled on processed output." }
+                                    Hint { text: "Burned-in output label: off (watermark = false in ~/.config/deepfake/config.toml; set it to true to bring it back)." }
                                 }
                             }
                             Hint { visible: !root.data.consent && root.page !== "Settings" && !root.expanded; text: "Before starting, open Settings and acknowledge the consent and synthetic-media notice."; color: Galaxy.lavender }
