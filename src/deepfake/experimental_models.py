@@ -77,7 +77,7 @@ def hash_file(path: Path, tick=None) -> str:
 
 def _manifest_digest(manifest) -> str:
     rows = sorted((f["path"], f["size"], f["sha256"]) for f in manifest["files"])
-    return hashlib.sha256(json.dumps(rows).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([manifest.get("revision"), rows]).encode()).hexdigest()
 
 
 def _fingerprint(path: Path) -> list[int]:
@@ -274,6 +274,6 @@ def verify(name, progress=None, *, quick=False):
                 corrupt.append(spec["path"])
         done += spec["size"]
     _write_stamp(name, manifest, verified)
-    return {"name": name, "ok": not missing and not corrupt and not manifest.get("blocked"),
+    return {"name": name, "ok": bool(manifest["files"]) and not missing and not corrupt and not manifest.get("blocked"),
             "missing": missing, "corrupt": corrupt, "blocked": manifest.get("blocked"),
             "hashed": hashed, "trusted_from_stamp": trusted}

@@ -43,7 +43,7 @@ ColumnLayout {
             CheckRow { required property var modelData; ok: false; blocking: true; title: modelData.title; detail: modelData.detail
                 actionLabel: modelData.label; onAction: if (modelData.run) modelData.run() } }
         TextHint { text: app.offlineEngine
-            ? page.engineName + " runs as an isolated worker under the memory guard. Frame generation is off for file renders; the disclosure watermark is added on export."
+            ? page.engineName + " runs as an isolated worker under the memory guard. Frame generation is off for file renders."
             : "The file is processed frame by frame with the live engine at its own frame rate; audio is copied from the input." }
     }
 
@@ -65,7 +65,7 @@ ColumnLayout {
     }
 
     Card { title: "Record the webcam"; visible: !app.offlineEngine
-        TextHint { text: "Starts a new webcam session that also writes the output file chosen above. Stop finalises the file. Live audio is not captured; the disclosure stays on every recording." }
+        TextHint { text: "Starts a new webcam session that also writes the output file chosen above. Stop finalises the file. Live audio is not captured. Existing files are never overwritten." }
         RowLayout { spacing: 10
             GalaxyButton { text: "●  Start recording"; primary: true; enabled: app.canStartLive && !!app.form.recording_path && !app.busy
                 hint: !app.form.recording_path ? "Choose an output file first" : ""; onClicked: app.start(false, true) }

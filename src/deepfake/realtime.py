@@ -212,9 +212,11 @@ def _file_fps(source, cap) -> float | None:
 class CaptureThread(threading.Thread):
     """Reads the camera continuously; keeps only the newest frame."""
 
-    def __init__(self, cap, size: tuple[int, int], stats: LiveStats, *, pace_fps: float | None = None) -> None:
+    def __init__(self, cap, size: tuple[int, int], stats: LiveStats, *, pace_fps: float | None = None,
+                 fit: str = "cover") -> None:
         super().__init__(name="deepfake-capture", daemon=True)
         self.cap, self.size, self.stats = cap, size, stats
+        self.fit = fit  # "stretch" is the old behaviour: it distorts faces when the camera ignores the size hint
         # A video file used as the "camera" is read as fast as the decoder allows (measured: 3600 fps, every
         # frame dropped); pace it at its own frame rate so it behaves like a live source.
         self.pace = 1.0 / pace_fps if pace_fps else None
@@ -226,7 +228,6 @@ class CaptureThread(threading.Thread):
         self._halt = threading.Event()
 
     def run(self) -> None:
-        import cv2
 
         next_t = time.monotonic()
         while not self._halt.is_set():
@@ -249,7 +250,9 @@ class CaptureThread(threading.Thread):
                     self._cv.notify_all()
                 return
             if (frame.shape[1], frame.shape[0]) != self.size:
-                frame = cv2.resize(frame, self.size)
+                from .geometry import fit_frame
+
+                frame = fit_frame(frame, self.size, self.fit)
             self.stats.capture.tick(t)
             with self._cv:
                 if self._latest is not None and self._taken < self._seq:
@@ -441,7 +444,7 @@ def _run_realtime(
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
     cap.set(cv2.CAP_PROP_FPS, source_fps)
-    capture = CaptureThread(cap, size, stats, pace_fps=_file_fps(capture_source, cap))
+    capture = CaptureThread(cap, size, stats, pace_fps=_file_fps(capture_source, cap), fit=getattr(cfg, "fit", "cover"))
     gpu = GpuPoller(stats)
     for th in (capture, worker, gpu):
         if th is not None:
@@ -551,6 +554,9 @@ def _run_offline(input_video, source_image, sink_factory, cfg, fg, *, print_stat
     cap = open_capture(input_video)
     resources.callback(cap.release)
     src_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    inner = getattr(pipe, "pipeline", pipe)
+    if hasattr(inner, "frame_dt"):
+        inner.frame_dt = 1.0 / src_fps  # landmark smoothing follows video time, not processing speed
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or cfg.preset.width
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or cfg.preset.height
     out_fps = fg.resolve_output_fps(src_fps) if fg and fg.enabled else src_fps

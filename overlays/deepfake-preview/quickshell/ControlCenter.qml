@@ -326,8 +326,7 @@ ShellRoot {
             anchors.fill: parent
             radius: root.expanded ? 0 : Galaxy.radiusWindow
             color: "transparent"
-            Starfield { anchors.fill: parent; cornerRadius: frame.radius; seed: 11; paintBase: true }
-            Rectangle { anchors.fill: parent; radius: frame.radius; color: "transparent"; border.width: root.expanded ? 0 : 1; border.color: Galaxy.edge }
+            Nebula { anchors.fill: parent; radius: frame.radius; seed: 11; rim: !root.expanded; hot: root.active }
 
             RowLayout {
                 anchors.fill: parent; anchors.margins: root.expanded ? 0 : 14; spacing: 14
@@ -363,7 +362,7 @@ ShellRoot {
                             state_: !root.connected ? "err" : root.active ? "ok" : root.jobRunning ? "busy" : "idle"
                             text: !root.connected ? "BACKEND OFFLINE" : root.active ? String(root.session.state || "live").toUpperCase() : root.jobRunning ? "MODEL JOB" : "CAMERA OFF" }
                         Text { visible: !root.narrow; Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; font.family: Galaxy.font; font.pixelSize: 9; color: Galaxy.dim; Layout.bottomMargin: 6
-                            text: "disclosed synthetic media" + (root.data.version ? "\nv" + root.data.version : "") }
+                            text: "on-device · nothing leaves this PC" + (root.data.version ? "\nv" + root.data.version : "") }
                     }
                 }
 

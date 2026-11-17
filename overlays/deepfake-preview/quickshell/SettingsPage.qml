@@ -7,12 +7,13 @@ ColumnLayout {
     Layout.fillWidth: true
     spacing: 12
 
-    Card { title: "Consent & disclosure"
+    Card { title: "Consent & output"
         aside: GalaxyPill { state_: app.data.consent ? "ok" : "warn"; text: app.data.consent ? "ACKNOWLEDGED" : "REQUIRED" }
         TextLabel { text: app.data.consent_text || "Loading notice…"; color: Galaxy.muted; font.pixelSize: 12 }
         GalaxyButton { visible: !app.data.consent; text: "I own or have permission to use my references and footage"; primary: true
             onClicked: app.enqueue("consent", {accepted: true}) }
-        TextHint { text: "The synthetic-media watermark stays enabled on processed output." }
+        TextHint { text: app.data.watermark === false ? "Burned-in output label: off (watermark = false in ~/.config/deepfake/config.toml; set it to true to bring it back)."
+            : "Burned-in output label: on (watermark = true in ~/.config/deepfake/config.toml)." }
     }
 
     Card { title: "Capture"

@@ -39,7 +39,7 @@ Rectangle {
         Rectangle { implicitWidth: tag.implicitWidth + 14; implicitHeight: 20; radius: 10; color: "#cc07060d"; border.color: Galaxy.edge
             Text { id: tag; anchors.centerIn: parent; font.family: Galaxy.font; font.pixelSize: 9; font.letterSpacing: 1.2
                 color: pv.kind === "original" ? Galaxy.muted : Galaxy.lavender
-                text: pv.kind === "original" ? "ORIGINAL" : "PROCESSED · SYNTHETIC MEDIA" } }
+                text: pv.kind === "original" ? "ORIGINAL" : "PROCESSED" } }
     }
     Flow {
         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 12; spacing: 6

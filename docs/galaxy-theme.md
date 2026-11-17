@@ -22,7 +22,7 @@ copies identical**; change both together.
 The deepfake control center adds app-specific components on the same tokens. They are not part of the
 shared set and need no counterpart in aivoice: `Card`, `Segmented`, `ChoiceRow`, `CheckRow`,
 `KeyValue`, `PathField`, `LogView`, `PreviewPane`, `TextLabel`, `TextHint`, and one `<Name>Page.qml`
-per page. The shared `Galaxy*` files and `Starfield.qml` are unchanged in 0.5.
+per page. The window backdrop is the shared `Nebula.qml`; `GalaxyPanel` is a solid translucent card on it.
 
 ## Tokens
 

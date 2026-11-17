@@ -19,6 +19,12 @@ on a GPU, with a camera or under a real Quickshell yet. See "Validation" at the 
 - `deepfake experimental enable|disable --backend NAME [--memory-limit-gb N]`.
 - Matte time, rotoscope state and background are part of the live session state.
 
+- **Face geometry** for the face swap (from the local working tree, merged into this version):
+  landmark alignment with roll correction, a mask fitted to the face, optional MediaPipe landmarks
+  (`deepfake models install face-landmarker --yes`), One Euro smoothing, camera frame fit, and
+  `deepfake compare` to A/B it against the old box crop. Controls are in **Studio → Face geometry**.
+- Nebula window backdrop and solid translucent cards.
+
 ### Fixed
 - **PersonaLive can be downloaded again.** It was blocked because `lambdalabs/sd-image-variations-diffusers`
   is now an empty repository: the Lambda organisation was renamed and the old name re-registered by

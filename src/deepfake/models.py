@@ -53,6 +53,19 @@ CATALOG: dict[str, dict[str, Any]] = {
         "notes": "Person segmentation for real-time rotoscoping and background replacement in the LivePortrait "
                  "head engine (--rotoscope, --background). Runs on the CPU through cv2.dnn.",
     },
+    "face-landmarker": {
+        "name": "face-landmarker",
+        "backend": "landmarker",
+        "source": "MediaPipe Face Landmarker float16 v1 (Google, storage.googleapis.com/mediapipe-models)",
+        "paper": "MediaPipe Face Mesh / Attention Mesh (Kartynnik et al. 2019; Grishchenko et al. 2020)",
+        "code_license": "Apache-2.0 (mediapipe)",
+        "weights_license": "Apache-2.0",
+        "size_hint": "3.6 MB",
+        "checksum": "SHA-256 (pinned)",
+        "install": "staged https + sha256",
+        "notes": "Optional landmark source for face alignment (needs `pip install mediapipe`). Measured on the "
+                 "bundled fixture: roll error 0.26 deg mean / 0.8 max vs 1.7 / 7.8 for refined YuNet points.",
+    },
     "alphaface": {
         "name": "alphaface",
         "backend": "alphaface",

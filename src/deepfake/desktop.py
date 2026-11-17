@@ -77,13 +77,25 @@ DEFAULT_PREFERENCES = {"theme": "galaxy", "mirror": False, "comparison": "proces
                        # LivePortrait head engine: matte (rotoscope) and background replacement
                        "rotoscope": "auto", "background": "keep", "background_image": "", "matte_scope": "person",
                        "prompt": ""}
+# Face geometry (deepfake.geometry). The legacy values are bbox / oval / yunet / False / stretch.
+GEOMETRY_PREFERENCES = {"alignment": "landmark", "mask_mode": "landmark", "landmarker": "auto",
+                        "landmark_smooth": True, "fit": "cover"}
+DEFAULT_PREFERENCES.update(GEOMETRY_PREFERENCES)
+
+
+def geometry_args(prefs):
+    return ["--align", prefs["alignment"], "--mask", prefs["mask_mode"], "--landmarker", prefs["landmarker"],
+            "--landmark-smooth" if prefs["landmark_smooth"] else "--no-landmark-smooth", "--fit", prefs["fit"]]
+
 
 ENUMS = {"theme": {"galaxy", "dark", "light", "matrix"},  # only galaxy is drawn; others kept for old files
          "comparison": {"original", "processed", "side-by-side", "slider"},
          "engine": {"alphaface", "experimental"}, "mode": {"head", "fullbody"},
          "backend": {"personalive", "editalive", "liveportrait"}, "preset": {"latency", "balanced", "quality"},
          "frame_gen": {"auto", "off", "2x", "3x", "4x"}, "encoder": {"auto", "libx264", "h264_nvenc"},
-         "rotoscope": {"auto", "on", "off"}, "matte_scope": {"person", "head"}}
+         "rotoscope": {"auto", "on", "off"}, "matte_scope": {"person", "head"},
+         "alignment": {"landmark", "bbox"}, "mask_mode": {"landmark", "oval"},
+         "landmarker": {"auto", "mediapipe", "yunet"}, "fit": {"cover", "contain", "stretch"}}
 
 
 def preferences():
@@ -106,9 +118,9 @@ def validate_preferences(data):
             raise ValueError(f"Invalid {key}")
         if key in {"width", "height", "fps"} and (type(value) is not int or not 1 <= value <= (240 if key == "fps" else 4096)):
             raise ValueError(f"Invalid {key}")
-        if key == "mirror" and not isinstance(value, bool):
-            raise ValueError("Invalid mirror preference")
-        if key not in ENUMS and key not in {"width", "height", "fps", "mirror"} and (not isinstance(value, str) or len(value) > 4096):
+        if key in {"mirror", "landmark_smooth"} and not isinstance(value, bool):
+            raise ValueError(f"Invalid {key} preference")
+        if key not in ENUMS and key not in {"width", "height", "fps", "mirror", "landmark_smooth"} and (not isinstance(value, str) or len(value) > 4096):
             raise ValueError(f"Invalid {key}")
         if key == "background" and value != "image":
             from .matting import BACKGROUND_CHOICES, parse_background
@@ -184,6 +196,7 @@ def _tail(path: Path, limit: int = 5000) -> str:
 def snapshot():
     from . import __version__
     from .characters import list_characters
+    from .config import load_config
     from .consent import CONSENT_TEXT, is_acknowledged
     from .devices import list_v4l2_devices
     from .engines import engine_status
@@ -200,7 +213,7 @@ def snapshot():
             "models": [{"name": m.name, "installed": m.installed, **m.meta} for m in list_models()],
             "characters": list_characters(), "devices": [vars(d) for d in list_v4l2_devices()],
             "consent": is_acknowledged(), "consent_text": CONSENT_TEXT, "model_job": model_job(),
-            "matte_installed": model_installed(),
+            "matte_installed": model_installed(), "watermark": bool(load_config().watermark),
             "state_dir": str(state_dir()), "gpu": gpu_info()}
 
 
@@ -209,7 +222,7 @@ def build_session_command(prefs, *, virtual=False, recording=False):
     args = [sys.executable, "-m", "deepfake", "virtualcam" if virtual else "webcam", "--no-widget", "--preview",
             "--engine", prefs["engine"], "--preset", prefs["preset"], "--input-device", prefs["camera"],
             "--width", str(prefs["width"]), "--height", str(prefs["height"]), "--fps", str(prefs["fps"]),
-            "--frame-gen", prefs["frame_gen"]]
+            "--frame-gen", prefs["frame_gen"]] + geometry_args(prefs)
     if prefs["reference"]:
         args += ["--reference", prefs["reference"]]
     if prefs["engine"] == "experimental":
@@ -275,7 +288,7 @@ def request(message):
             validate_preferences(prefs)
             args = [sys.executable, "-m", "deepfake", "video", "-i", str(source_video), "-o", str(output),
                     "--no-widget", "--preview", "--engine", prefs["engine"], "--reference", prefs["reference"],
-                    "--preset", prefs["preset"], "--frame-gen", "off", "--encoder", prefs["encoder"]]
+                    "--preset", prefs["preset"], "--frame-gen", "off", "--encoder", prefs["encoder"]] + geometry_args(prefs)
             if prefs["engine"] == "experimental":
                 args += ["--mode", prefs["mode"], "--model-backend", prefs["backend"], *head_matte_args(prefs)]
                 if offline:

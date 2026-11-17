@@ -221,7 +221,7 @@ def test_engine_paste_uses_matte_and_reports_metrics(monkeypatch):
         def detect(self, frame):
             return [FACE]
 
-    monkeypatch.setattr("deepfake.engines.experimental.liveportrait.create_detector", lambda prefer: Detector())
+    monkeypatch.setattr("deepfake.engines.experimental.liveportrait.create_detector", lambda *a, **k: Detector())
     monkeypatch.setattr(matting, "PersonSegmenter", ColorSegmenter)
     monkeypatch.setattr(matting.HeadMatte.__init__, "__kwdefaults__", {"segmenter_factory": ColorSegmenter})
     monkeypatch.setattr(matting, "model_installed", lambda: True)

@@ -143,6 +143,28 @@ ColumnLayout {
                     onClicked: app.confirmModel("install_model", app.model("pphumanseg")) }
             }
 
+            // face geometry applies to the AlphaFace face swap (deepfake.geometry)
+            Card { visible: app.engineKey === "alphaface"; title: "Face geometry"
+                GridLayout { Layout.fillWidth: true; columns: 2; columnSpacing: 8; rowSpacing: 6
+                    TextHint { text: "Alignment" } TextHint { text: "Landmarks" }
+                    Segmented { Layout.fillWidth: true; stretch: true; enabled: !app.active
+                        model: [{value: "landmark", label: "Landmark"}, {value: "bbox", label: "Box"}]
+                        value: app.form.alignment || "landmark"; onPicked: v => app.edit("alignment", v) }
+                    GalaxyCombo { model: ["auto", "mediapipe", "yunet"]; enabled: !app.active && (app.form.alignment || "landmark") === "landmark"
+                        currentIndex: Math.max(0, model.indexOf(app.form.landmarker || "auto")); onActivated: app.edit("landmarker", currentText) }
+                    TextHint { text: "Composite mask" } TextHint { text: "Camera frame fit" }
+                    Segmented { Layout.fillWidth: true; stretch: true; enabled: !app.active
+                        model: [{value: "landmark", label: "Landmark"}, {value: "oval", label: "Oval"}]
+                        value: app.form.mask_mode || "landmark"; onPicked: v => app.edit("mask_mode", v) }
+                    GalaxyCombo { model: ["cover", "contain", "stretch"]; enabled: !app.active
+                        currentIndex: Math.max(0, model.indexOf(app.form.fit || "cover")); onActivated: app.edit("fit", currentText) }
+                }
+                GalaxyToggle { text: "Smooth landmarks (One Euro filter)"; enabled: !app.active; checked: app.form.landmark_smooth !== false; onToggled: app.edit("landmark_smooth", checked) }
+                KeyValue { visible: app.active && !!session.geometry; k: "in use"
+                    v: session.geometry ? String(session.geometry.alignment) + " · " + String(session.geometry.landmarker) + " · mask " + String(session.geometry.mask_mode) + " · " + String(session.geometry.fit) : "—" }
+                TextHint { text: "Landmark = roll-corrected crop and a mask fitted to the face. Box + Oval + stretch reproduce the old output. Compare on your own clip: deepfake compare -i clip.mp4 -f face.png" }
+            }
+
             Card { title: "Quality"
                 TextHint { text: "Preset" }
                 Segmented { Layout.fillWidth: true; stretch: true; enabled: !app.active

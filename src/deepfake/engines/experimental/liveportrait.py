@@ -79,7 +79,8 @@ class LivePortraitEngine(TransformationEngine):
 
         self.config = config
         # OpenCV 5 ships no Haar cascades; the shared factory prefers YuNet and falls back to Haar.
-        self.detector = create_detector("auto")
+        # Plain YuNet points: the head crop needs the box only, not the MediaPipe landmark refinement.
+        self.detector = create_detector(landmarker="yunet")
         background = parse_background(getattr(config, "background", "keep"))
         enabled, note = resolve_rotoscope(getattr(config, "rotoscope", None), background)
         self.matte = HeadMatte(background, getattr(config, "matte_scope", "person")) if enabled else None

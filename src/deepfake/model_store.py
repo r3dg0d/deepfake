@@ -38,7 +38,8 @@ INSIGHTFACE_RELEASE = "https://github.com/deepinsight/insightface/releases/downl
 RIFE_RELEASE = "https://github.com/HolyWu/vs-rife/releases/download/model"
 ALPHAFACE_REPO = "https://github.com/andrewyu90/Alphaface_Official.git"
 ALPHAFACE_COMMIT = "d41fbd4974ed3a68d9a48b79019f9be297726c30"
-ALLOWED_HOSTS = ("https://drive.usercontent.google.com/", "https://github.com/", "https://huggingface.co/")
+ALLOWED_HOSTS = ("https://drive.usercontent.google.com/", "https://github.com/", "https://huggingface.co/",
+                 "https://storage.googleapis.com/mediapipe-models/")
 USER_AGENT = "deepfake-model-store/1"
 
 # trust: "upstream" = digest published by the upstream host (GitHub release asset digest);
@@ -83,6 +84,15 @@ CORE: dict[str, dict[str, Any]] = {
                     "e876e63603f6c65c1a22576bfd5fc7c07ecf9eb9/human_segmentation_pphumanseg_2023mar.onnx",
              "size": 6163938, "sha256": "552d8a984054e59b5d773d24b9b12022b22046ceb2bbc4c9aaeaceb36a9ddf24",
              "trust": "upstream", "format": "onnx"},
+        ],
+    },
+    "face-landmarker": {
+        "files": [
+            {"path": "face_landmarker.task",
+             "url": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/"
+                    "face_landmarker.task",
+             "size": 3758596, "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+             "trust": "upstream", "format": "task"},
         ],
     },
     "alphaface": {
@@ -248,6 +258,14 @@ def validate_format(path: Path, fmt: str) -> str:
             f.seek(8)
             json.loads(f.read(n))
         return "safetensors"
+    if fmt == "task":  # MediaPipe task bundle: a zip holding .tflite models
+        if not zipfile.is_zipfile(path):
+            raise ModelStoreError(f"{path.name}: not a MediaPipe task bundle")
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+        if not any(n.endswith(".tflite") for n in names):
+            raise ModelStoreError(f"{path.name}: task bundle holds no .tflite model")
+        return f"mediapipe task bundle ({len(names)} files)"
     raise ModelStoreError(f"unknown format {fmt}")
 
 

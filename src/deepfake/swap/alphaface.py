@@ -26,7 +26,8 @@ class AlphaFaceSwapper:
 
     name = "alphaface"
 
-    def __init__(self, device: str = "cuda", precision: str = "fp32") -> None:
+    def __init__(self, device: str = "cuda", precision: str = "fp32", identity_align: str = "arcface") -> None:
+        self.identity_align = identity_align
         self.device = device if device != "auto" else ("cuda" if self._cuda_ok() else "cpu")
         if precision not in ("fp32", "bf16"):
             # fp16 is rejected on purpose: measured mean abs error 0.11-0.13 vs fp32
@@ -140,20 +141,12 @@ class AlphaFaceSwapper:
 
     def set_source(self, source_bgr: np.ndarray) -> None:
         torch = self._torch
-        # Prefer a face crop of the identity image so ArcFace gets face, not background.
-        face = source_bgr
-        try:
-            from ..detect import align_crop, create_detector
+        # The ArcFace encoder is trained on five-point aligned 112x112 faces; a loose box crop
+        # shifts and rescales the features it reads (identity_align="bbox" keeps the old crop).
+        from ..geometry import identity_crop
 
-            boxes = create_detector("auto").detect(source_bgr)
-            if boxes:
-                boxes = sorted(boxes, key=lambda b: b.w * b.h, reverse=True)
-                face, _ = align_crop(source_bgr, boxes[0], size=256, pad=0.25)
-        except Exception:
-            face = source_bgr
-        # Source identity path: 112×112, normalized like eval.py s_transform
+        face = identity_crop(source_bgr, mode=self.identity_align, size=112)
         rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
-        rgb = cv2.resize(rgb, (112, 112), interpolation=cv2.INTER_AREA)
         ten = torch.from_numpy(rgb).float().permute(2, 0, 1) / 255.0
         ten = _normalize_by_127_5(ten).unsqueeze(0).to(self._device)
         self._source_tensor = ten

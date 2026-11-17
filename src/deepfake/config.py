@@ -17,6 +17,14 @@ DEFAULTS = {
     "preview": True,
     "watermark": True,
     "show_metrics": True,
+    # Geometry; the legacy values are bbox / oval / false / bbox / stretch.
+    "alignment": "landmark",
+    "align_template": "ffhq",
+    "mask_mode": "landmark",
+    "landmark_smooth": True,
+    "identity_align": "arcface",
+    "fit": "cover",
+    "landmarker": "auto",
 }
 
 
@@ -30,6 +38,13 @@ class DeepfakeConfig:
     preview: bool = True
     watermark: bool = True
     show_metrics: bool = True
+    alignment: str = "landmark"
+    align_template: str = "ffhq"
+    mask_mode: str = "landmark"
+    landmark_smooth: bool = True
+    identity_align: str = "arcface"
+    fit: str = "cover"
+    landmarker: str = "auto"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
